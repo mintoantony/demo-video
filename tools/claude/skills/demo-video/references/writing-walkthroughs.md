@@ -87,7 +87,7 @@ The carry-over uses Playwright storage state (cookies and local storage). It doe
 |---|---|
 | Second run of a mutating chapter shows different data | Reset first, or record once and say it was a single take |
 | `localhost` does not connect | Use `127.0.0.1`. Some PCs resolve localhost to `::1` and the server only listens on IPv4 |
-| Git Bash `npm` fails (fnm) | Use PowerShell: `& "C:\Program Files\nodejs\npm.cmd" install` |
+| Git Bash `npm` fails (fnm), Windows only | Use PowerShell: `& "C:\Program Files\nodejs\npm.cmd" install`. On macOS and Linux plain `npm install` works |
 | Backslashes lost when writing a script from a shell heredoc | Write the file with the Write tool, not a heredoc |
 | Video is only `.webm` | Playwright cannot write mp4. `player.html` plays the clips in order. `full.mp4` is made only if `ffmpeg` is already on PATH |
 | Clip is tiny or blank | The page never loaded. Check the base URL and that the app is running |

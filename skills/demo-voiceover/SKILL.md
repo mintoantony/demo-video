@@ -7,7 +7,7 @@ description: Adds a spoken voice-over (narration, commentary, audio track, talki
 
 Add a voice to a silent demo run. Work in two phases. First write the narration and show it. Synthesise only after the user says yes. Run it after `/demo-video`, on the run folder it made (`demo-runs/<timestamp>/`, the one with `results.json`).
 
-`<skill>` below is the folder of this skill (usually `~/.claude/skills/demo-voiceover/`). The scripts re-run themselves in the skill's `.venv`, so call them with plain `python`.
+`<skill>` below is the folder of this skill (usually `~/.claude/skills/demo-voiceover/`). The scripts re-run themselves in the skill's `.venv`, so call them with plain `python` on Windows (or `py`) and `python3` on macOS and Linux. The examples below use `python`; swap in `python3` there.
 
 ## Before you start
 
@@ -79,7 +79,7 @@ Optional loudness check: `ffmpeg -i <clip> -af volumedetect -f null -` prints `m
 | Engine | Use | Privacy |
 |---|---|---|
 | `piper` | Default. Neural, natural enough for a demo | Offline |
-| `system` | Windows SAPI, macOS or espeak voices. Fallback | Offline |
+| `system` | Windows SAPI, macOS `say`, Linux espeak-ng. Fallback | Offline |
 | `edge` | Best quality | Online. Text goes to Microsoft. Opt-in only |
 
 Details, voices, timing rules and fixes are in `references/voiceover.md`.

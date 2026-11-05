@@ -57,7 +57,7 @@ if (fs.existsSync(skillDest)) {
 }
 
 // the voice-over skill: scripts and docs only, never .venv, voices or caches
-const skip = (rel) => rel.split(path.sep).some((s) => ['.venv', 'voices', '__pycache__'].includes(s)) || rel.endsWith('.pyc');
+const skip = (rel) => rel.split(path.sep).some((s) => ['.venv', '.uv-bootstrap', '.wheelcheck', 'voices', '__pycache__'].includes(s)) || rel.endsWith('.pyc');
 const voSrc = path.join(root, 'skills', 'demo-voiceover');
 const voDest = path.join(out, 'skills', 'demo-voiceover');
 const voWanted = new Set();

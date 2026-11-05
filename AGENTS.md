@@ -55,7 +55,7 @@ When the brief asks for a voice-over on an existing run folder (the `/demo-voice
 - Do not read `recorder.mjs`. Read the template and the references.
 - Do not read all screenshots. Read at most 8.
 - Do not paste whole reports back. Quote the rows that matter.
-- Use 127.0.0.1 instead of localhost. On Windows, use PowerShell for `npm`.
+- Use 127.0.0.1 instead of localhost. On Windows, use PowerShell for `npm`; on macOS and Linux plain `npm` is fine.
 
 ## Report format
 

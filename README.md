@@ -20,7 +20,8 @@ Built 2026-11-05 by Minto Antony.
 | `AGENTS.md` | Source of the `demo-video-recorder` agent (Sonnet) |
 | `make_tool_copies.mjs` | Builds `tools/claude` from the sources (`--check` tests it) |
 | `tools/claude/` | The copies that get installed |
-| `install.ps1` | Installs the agent and skill for your user |
+| `install.ps1`, `install.sh` | Install the agent and skills (Windows; macOS and Linux) |
+| `.github/workflows/test.yml` | CI: install and tests on macOS, Linux and Windows |
 | `tests/` | The test suite and an invented fixture app |
 
 ## How it works
@@ -30,20 +31,37 @@ Built 2026-11-05 by Minto Antony.
 3. **Approve.** You read the storyboard and say yes. Then `approve.mjs` stores the sha256 of the script. Record mode refuses without it, and refuses again if the script changes.
 4. **Record.** Each chapter gets its own clip. It opens on an intro card while the first page loads. A frame monitor checks for blank frames and long identical frames, and writes "Frame quality" into `report.md` and `results.json`.
 
-## Install it
+## Install
 
-1. Run `node make_tool_copies.mjs`.
-2. Run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
-3. Restart Claude Code.
+Prerequisites: Node.js 18 or newer, and Python 3.9 or newer (for the voice-over skill). On macOS: `brew install node python@3.12`.
 
-| Copied to | What |
+macOS and Linux:
+
+```
+node make_tool_copies.mjs        # only if tools/claude is missing or stale
+bash install.sh                  # or: bash install.sh --prefix /some/folder
+```
+
+Windows (PowerShell):
+
+```
+node make_tool_copies.mjs
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # or: ... -Prefix D:\some\folder
+```
+
+Then restart Claude Code. The default prefix is `~/.claude` (Windows: `%USERPROFILE%\.claude`). If `CLAUDE_CONFIG_DIR` is set, that is used. Running the installer again is safe.
+
+| Copied to (under the prefix) | What |
 |---|---|
-| `%USERPROFILE%\.claude\agents\demo-video-recorder.md` | The agent |
-| `%USERPROFILE%\.claude\skills\demo-video\` | The skill and engine, then `npm install` |
+| `agents/demo-video-recorder.md` | The agent |
+| `skills/demo-video/` | The skill and engine, then `npm install` |
+| `skills/demo-voiceover/` | The voice-over skill, then `setup_voice.py` |
 
-The installer also copies `skills\demo-voiceover\` and runs `python setup_voice.py` there (pip packages and a 64 MB voice file, so it needs a network).
+Downloads: the Chromium browser for Playwright (about 150 MB), Python packages, and the default voice (about 64 MB). It needs a network.
 
-By hand: copy `tools\claude\agents\*` to `%USERPROFILE%\.claude\agents` and `tools\claude\skills\demo-video` to `%USERPROFILE%\.claude\skills\demo-video`. Then run `npm install` and `npx playwright install chromium` there.
+macOS notes: the first run may ask for permission (for example to control the terminal or record the screen). Allow it. The `system` voice uses the built-in `say` command. On Linux, install `espeak-ng` for the `system` voice, and run `npx playwright install-deps chromium` if Chromium will not start.
+
+By hand: copy `tools/claude/agents/*` to `<prefix>/agents` and `tools/claude/skills/*` to `<prefix>/skills`. Then run `npm install` and `npx playwright install chromium` in `skills/demo-video`, and `python3 setup_voice.py` in `skills/demo-voiceover` (Windows: `python`).
 
 ## How to use it
 
@@ -56,7 +74,7 @@ Type `/demo-voiceover` after a recording. `make_script.py` writes `voiceover/nar
 | Engine | Notes |
 |---|---|
 | `piper` (default) | Offline. Voice `en_GB-cori-medium` from huggingface.co/rhasspy/piper-voices, British English, public domain (LibriVox recordings) |
-| `system` | Offline, pyttsx3 (Windows SAPI5, macOS, espeak) |
+| `system` | Offline. Windows SAPI5 (pyttsx3), macOS `say`, Linux espeak-ng |
 | `edge` | edge-tts. Online: the text goes to Microsoft. Opt-in with `--allow-online`, after the user agrees |
 
 Licences: imageio-ffmpeg BSD-2-Clause. The ffmpeg binary it ships is a static GPL build (libx264). Used as a separate program, nothing is linked into this repo. A system ffmpeg is preferred if present. piper-tts MIT, pyttsx3 MPL-2.0, edge-tts LGPL-3.0.
@@ -88,7 +106,7 @@ Each run has its own timestamped folder under `demo-runs/`. Earlier runs are nev
 npm install
 node tests/run-tests.mjs
 node make_tool_copies.mjs --check
-python tests/test_voiceover.py   # voice-over skill; needs skills/demo-voiceover/setup_voice.py run once
+python tests/test_voiceover.py   # python3 on macOS/Linux; voice-over skill; needs skills/demo-voiceover/setup_voice.py run once
 ```
 
 The test run takes a few minutes because the fixture has a page that loads in 7 s.

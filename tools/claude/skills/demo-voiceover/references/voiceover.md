@@ -3,7 +3,7 @@
 ## Engines and voices
 
 - `piper` (default). Offline neural voice. Default voice `en_GB-cori-medium` (British English, female, 22.05 kHz, about 64 MB). Source: huggingface.co/rhasspy/piper-voices. The recordings are public domain (LibriVox), so the output has no restriction. The voice files live in `<skill>/voices/` and are not committed. For another voice, put its `.onnx` and `.onnx.json` pair into `voices/` and pass `--voice <name>`. Check the licence in its model card first.
-- `system`. Uses pyttsx3: Windows SAPI5 (for example "Microsoft Hazel Desktop" en-GB), macOS NSSpeechSynthesizer, or espeak on Linux. Pass `--voice Hazel` to pick one by part of its name. Robotic, but needs no download.
+- `system`. Windows: pyttsx3 with SAPI5 (for example "Microsoft Hazel Desktop" en-GB). macOS: the built-in `say` command, converted to wav with ffmpeg (no extra packages). Linux: `espeak-ng` (install it with `sudo apt-get install espeak-ng` or your package manager), else pyttsx3. Pass `--voice Daniel` (macOS) or `--voice Hazel` (Windows) to pick one by part of its name. Robotic, but needs no download.
 - `edge`. edge-tts calls Microsoft's online service. The narration text leaves the machine. Use it only when the user agrees, with `--allow-online`. Default voice `en-GB-SoniaNeural`; pass `--voice en-GB-RyanNeural` for another.
 
 Choose `piper` unless the user wants something else. The engine that ran is in the report.
@@ -25,8 +25,15 @@ A system `ffmpeg` on PATH is used when present. Otherwise the binary from the `i
 - "narration is not approved": show `narration.md`, get a yes, run `approve.py`.
 - "narration.json changed after it was approved": run `make_script.py <run> --render`, ask again, approve again.
 - `voiced/ already exists`: add `--force` if the user wants it replaced.
-- "No ffmpeg found" or import errors: run `python <skill>/setup_voice.py`.
+- "No ffmpeg found" or import errors: run `python <skill>/setup_voice.py` (`python3` on macOS and Linux).
 - Piper voice missing: `python <skill>/setup_voice.py` downloads it. Without a network use `--engine system`.
 - A system voice fails with "produced no audio": the report lists the line. Retry, or use piper.
 - Python without wheels for piper or onnxruntime: `setup_voice.py` falls back to `uv` to create the venv with a supported Python.
 - No sound in the result: check `report.md` for failed lines, then run `volumedetect` on one clip.
+
+## macOS and Linux
+
+- Use `python3` where this file says `python`. The venv python is `<skill>/.venv/bin/python` (Windows: `.venv\Scripts\python.exe`).
+- macOS may ask once whether Terminal (or your editor) may control or record the screen, and the first `say` run can be slow. Allow it.
+- If Homebrew or Debian Python refuses `pip install` (externally managed), setup_voice.py already avoids that: it builds its own venv and, when needed, a throwaway venv for `uv`.
+- Linux `system` engine needs `espeak-ng`. Piper needs no system packages.

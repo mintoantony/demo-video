@@ -1,8 +1,12 @@
-# Installs the demo-video agent and skill for Claude Code (user level).
-# Run from this folder:  powershell -ExecutionPolicy Bypass -File .\install.ps1
+# Installs the demo-video agent and skills for Claude Code (Windows).
+# Run from this folder:  powershell -ExecutionPolicy Bypass -File .\install.ps1 [-Prefix <folder>]
+# Prefix defaults to $env:CLAUDE_CONFIG_DIR, else %USERPROFILE%\.claude. Safe to run again.
+param(
+  [string]$Prefix = $(if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' })
+)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$claude = Join-Path $env:USERPROFILE '.claude'
+$claude = $Prefix
 $src = Join-Path $here 'tools\claude'
 
 if (-not (Test-Path $src)) { throw "tools\claude not found. Run: node make_tool_copies.mjs" }
@@ -25,12 +29,15 @@ Write-Host "Voice-over skill copied to $vo"
 Push-Location $skill
 try {
   npm install
+  if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
   npx playwright install chromium
+  if ($LASTEXITCODE -ne 0) { throw "playwright install failed" }
 } finally { Pop-Location }
 # voice-over setup: venv, pip packages, default voice (needs network; safe to run again)
 Push-Location $vo
 try {
   $py = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
   & $py setup_voice.py
+  if ($LASTEXITCODE -ne 0) { throw "setup_voice.py failed" }
 } finally { Pop-Location }
 Write-Host 'Done. Restart Claude Code, then type /demo-video (and /demo-voiceover for a voice).'

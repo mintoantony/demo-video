@@ -1,0 +1,55 @@
+name: test
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux packages (espeak-ng, Chromium libraries)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+      - name: Install (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: bash install.sh --prefix "$RUNNER_TEMP/claude"
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./install.ps1 -Prefix "$env:RUNNER_TEMP\claude"
+      - name: Linux Chromium system libraries
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps chromium
+        working-directory: ${{ runner.temp }}/claude/skills/demo-video
+      - name: Repo dependencies
+        run: npm install
+      - name: Repo Chromium
+        run: npx playwright install chromium
+      - name: Tool copies are current
+        run: node make_tool_copies.mjs --check
+      - name: Fixture tests
+        run: node tests/run-tests.mjs
+      - name: Voice-over tests
+        run: python tests/test_voiceover.py
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}
+          path: tests/last-run.log
+          if-no-files-found: ignore

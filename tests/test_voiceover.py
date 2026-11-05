@@ -1,6 +1,6 @@
 """Tests for the demo-voiceover skill. Run: python tests/test_voiceover.py   (or pytest tests/test_voiceover.py)
 
-Works on a COPY of tests/out/20261105-181845. The original run is never modified.
+Works on a COPY of the newest run in tests/out (made by tests/run-tests.mjs). The original run is never modified.
 """
 import hashlib, json, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
@@ -8,7 +8,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "demo-voiceover"
 SCRIPTS = SKILL / "scripts"
-SRC_RUN = ROOT / "tests" / "out" / "20261105-181845"
+_RUNS = sorted(d for d in (ROOT / "tests" / "out").glob("2*") if (d / "chapters.json").exists())     if (ROOT / "tests" / "out").exists() else []
+if not _RUNS:
+    sys.exit("No recorded run in tests/out. Run: node tests/run-tests.mjs")
+SRC_RUN = _RUNS[-1]  # newest fixture run
 PY = SKILL / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 PY = str(PY if PY.exists() else sys.executable)
 sys.path.insert(0, str(SCRIPTS))

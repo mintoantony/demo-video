@@ -7,7 +7,7 @@ default piper voice into voices/. Safe to run again: finished steps are skipped.
     python setup_voice.py [--voice en_GB-cori-medium] [--no-voice] [--recreate]
 
 If the running Python has no wheels for piper-tts / onnxruntime (new Python releases
-often lag), it uses `uv` (installed with pip if missing) to fetch a managed Python 3.12.
+often lag), it uses `uv` (installed into a throwaway venv if missing) to fetch a managed Python 3.12.
 """
 import argparse, os, subprocess, sys, urllib.request, shutil
 from pathlib import Path
@@ -48,17 +48,32 @@ def make_venv(recreate):
         run([sys.executable, "-m", "venv", VENV], check=True)
         return "pip"
     print("No piper/onnxruntime wheels for this Python; using uv with a managed Python 3.12.")
-    r = run([sys.executable, "-m", "pip", "install", "--quiet", "uv"])
-    if r.returncode != 0:
-        sys.exit("Could not install uv. Install Python 3.12 and run setup again with it.")
-    run([sys.executable, "-m", "uv", "venv", "--python", "3.12", VENV], check=True)
+    uv = find_uv()
+    run(uv + ["venv", "--python", "3.12", VENV], check=True)
     return "uv"
+
+
+def find_uv():
+    """Command prefix for uv. Uses one on PATH, else installs it into a throwaway venv.
+    (Installing into the system Python fails on Homebrew/Debian: PEP 668.)"""
+    exe = shutil.which("uv")
+    if exe:
+        return [exe]
+    boot = HERE / ".uv-bootstrap"
+    bin_dir = boot / ("Scripts" if os.name == "nt" else "bin")
+    uv_exe = bin_dir / ("uv.exe" if os.name == "nt" else "uv")
+    if not uv_exe.exists():
+        run([sys.executable, "-m", "venv", boot], check=True)
+        r = run([bin_dir / ("python.exe" if os.name == "nt" else "python"), "-m", "pip", "install", "--quiet", "uv"])
+        if r.returncode != 0 or not uv_exe.exists():
+            sys.exit("Could not install uv. Install Python 3.12 and run setup again with it.")
+    return [uv_exe]
 
 
 def install(kind):
     req = HERE / "requirements.txt"
     if kind == "uv":
-        run([sys.executable, "-m", "uv", "pip", "install", "--python", venv_python(), "-r", req], check=True)
+        run(find_uv() + ["pip", "install", "--python", venv_python(), "-r", req], check=True)
     else:
         run([venv_python(), "-m", "pip", "install", "--quiet", "-r", req], check=True)
 

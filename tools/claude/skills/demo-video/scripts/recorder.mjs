@@ -296,6 +296,7 @@ export async function createRecorder(opts = {}) {
   const chapters = [];   // { title, actor, clip }
   const notes = [];
   let storage;           // carried sign-in
+  let lastUrl;           // where the previous chapter ended; the next chapter continues there
   let n = 0;             // clip counter
   let cur = null;        // { page, ctx, chapterTitle, actor }
   let finished = false;
@@ -574,8 +575,12 @@ export async function createRecorder(opts = {}) {
         settle: (ms) => settle(page, ms),
       };
       try {
-        if (copts.url) {
-          await withProgress(() => page.goto(url(copts.url), { waitUntil: 'domcontentloaded' }), async (s) => {
+        // A chapter starts at its own url, or else continues on the page where the previous
+        // chapter ended (the intro card replaced it, so go back there). A fresh chapter with no url
+        // starts on the card and its first step navigates.
+        const startUrl = copts.url ? url(copts.url) : (!copts.fresh && lastUrl) ? lastUrl : null;
+        if (startUrl) {
+          await withProgress(() => page.goto(startUrl, { waitUntil: 'domcontentloaded' }), async (s) => {
             try { await page.evaluate((t) => { let e = document.getElementById('__demo_load'); if (!e) { e = document.createElement('div'); e.id = '__demo_load'; e.style.cssText = 'font-size:30px;margin-top:30px;color:#9fe8ff'; document.body.appendChild(e); } e.textContent = t; }, `Loading the first page... (${s} s)`); } catch { /* card page is gone */ }
           });
           await settle(page);
@@ -593,6 +598,7 @@ export async function createRecorder(opts = {}) {
         log(`chapter "${title}" crashed: ${firstLine(e.message)}`);
       }
       try { storage = await ctx.storageState(); } catch { /* keep the old sign-in */ }
+      try { const u = page.url(); if (/^https?:/i.test(u)) lastUrl = u; } catch { /* page closed */ }
       cur = null;
       const clip = await closeClip(ctx, page, 'chapter', title, started, mon, firstContentMs);
       chapters.push({ title, actor: copts.actor || '', clip: clip.file, steps: stepNo });
