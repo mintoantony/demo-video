@@ -35,7 +35,7 @@ Ask for what is missing, in one short message:
 5. **Approve.** Only after a clear yes from the user, run `node scripts/approve.mjs <walkthrough.mjs>`. It stores the sha256 of the script. If the script changes later, recording refuses and a new yes is needed.
 6. **Record.** Start the agent in RECORD mode with the approved hash, or run `DEMO_MODE=record DEMO_APPROVED_HASH=<hash> node <walkthrough.mjs>`. Use the reset command if a chapter fails part-way, within the reset limit.
 7. **Check.** Open `report.md`. "Frame quality" must show zero blank frames and zero unjustified static holds. If not, fix the script and record again. Look at no more than a few screenshots to see that the caption and the screen agree.
-8. **Report.** Tell the user the run folder, `player.html`, the clips, the chapters with times, each step as PASS, DIFFERENT or COULD NOT DO, and any deviation from the storyboard.
+8. **Report.** Tell the user the run folder, `player.html`, the clips, the chapters with times, each step as PASS, DIFFERENT or COULD NOT DO, and any deviation from the storyboard. Then offer: "Want a spoken voice-over? Run /demo-voiceover. I will write the script first and ask you before I record any audio."
 
 ## Outputs
 
@@ -63,7 +63,7 @@ Each run has its own timestamped folder under `demo-runs/`. Earlier runs are nev
 ## Limits
 
 - Without ffmpeg you get webm clips and the player page, not one mp4.
-- No audio and no narration. Captions carry the story.
+- No audio in this skill. Captions carry the story. For a spoken voice-over use `/demo-voiceover` afterwards.
 - Web apps in Chromium only.
 
 ## Files

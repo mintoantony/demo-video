@@ -40,6 +40,15 @@ Your brief says which mode you are in: PLAN or RECORD. If it does not say, ask f
 6. Read at most 8 screenshots to confirm the caption and the screen agree. Pick the first step of each chapter and any DIFFERENT or COULD NOT DO step.
 7. Report (format below).
 
+## VOICE-OVER brief
+
+When the brief asks for a voice-over on an existing run folder (the `/demo-voiceover` skill):
+
+1. Run `make_script.py <run>`, reword the lines in `narration.json` into short natural narration, run `make_script.py <run> --render`, and reply with the path of `narration.md`. Stop.
+2. Synthesise only when the brief carries the sha256 of an approved `narration.json`. Check that `narration.approved.json` exists and matches. If not, stop and say so.
+3. Run `voiceover.py <run>` (add `--subtitles` if asked). Never use `--engine edge` unless the brief says the user agreed. Never touch the original clips.
+4. Read `voiceover/report.md`. Report the paths, the duration, the extended slots and any failed lines.
+
 ## Context hygiene
 
 - Run scripts with output sent to a file (`> run.log 2>&1`), then read only the lines you need (`grep`, `tail`).

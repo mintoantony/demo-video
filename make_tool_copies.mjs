@@ -56,6 +56,27 @@ if (fs.existsSync(skillDest)) {
   }
 }
 
+// the voice-over skill: scripts and docs only, never .venv, voices or caches
+const skip = (rel) => rel.split(path.sep).some((s) => ['.venv', 'voices', '__pycache__'].includes(s)) || rel.endsWith('.pyc');
+const voSrc = path.join(root, 'skills', 'demo-voiceover');
+const voDest = path.join(out, 'skills', 'demo-voiceover');
+const voWanted = new Set();
+for (const f of walk(voSrc)) {
+  const rel = path.relative(voSrc, f);
+  if (skip(rel)) continue;
+  voWanted.add(rel);
+  put(path.join(voDest, rel), fs.readFileSync(f));
+}
+if (fs.existsSync(voDest)) {
+  for (const f of walk(voDest)) {
+    const rel = path.relative(voDest, f);
+    if (skip(rel)) continue;
+    if (!voWanted.has(rel)) {
+      if (check) { console.log('STALE  extra file ' + rel); stale += 1; } else fs.rmSync(f);
+    }
+  }
+}
+
 if (check) {
   console.log(stale ? `${stale} stale file(s). Run: node make_tool_copies.mjs` : 'Copies are up to date.');
   process.exit(stale ? 1 : 0);

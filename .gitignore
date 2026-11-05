@@ -3,3 +3,9 @@ demo-runs/
 tests/out/
 *.log
 tests/last-run.log
+.venv/
+skills/demo-voiceover/voices/
+__pycache__/
+*.pyc
+voiceover/
+voiced/
