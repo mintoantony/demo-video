@@ -1,0 +1,15 @@
+{
+  "name": "demo-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Records a captioned walkthrough video of a web app, one clip per chapter plus a player page.",
+  "scripts": {
+    "test": "node tests/run-tests.mjs",
+    "copies": "node make_tool_copies.mjs",
+    "check": "node make_tool_copies.mjs --check"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}

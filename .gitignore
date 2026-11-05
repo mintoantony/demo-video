@@ -1,0 +1,5 @@
+node_modules/
+demo-runs/
+tests/out/
+*.log
+tests/last-run.log

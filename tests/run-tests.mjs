@@ -1,0 +1,124 @@
+// Run with: node tests/run-tests.mjs   (exit code 1 on any failure)
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { runFixtureWalkthrough } from './fixture-walkthrough.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const appDir = path.join(here, 'fixture-app');
+const outRoot = path.join(here, 'out');
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+
+const server = http.createServer(async (req, res) => {
+  if (req.url.split('?')[0] === '/slow.html') await new Promise((r) => setTimeout(r, 7000)); // the deliberately slow page
+  const p = (req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0]);
+  const f = path.join(appDir, path.normalize(p));
+  if (!f.startsWith(appDir) || !fs.existsSync(f)) { res.writeHead(404); res.end('not found'); return; }
+  res.writeHead(200, { 'content-type': types[path.extname(f)] || 'text/plain' });
+  res.end(fs.readFileSync(f));
+});
+await new Promise((r) => server.listen(0, '127.0.0.1', r)); // 127.0.0.1, not localhost (::1 trouble on some PCs)
+const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+let failed = 0;
+const check = (name, cond, detail = '') => {
+  console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  (' + detail + ')' : ''}`);
+  if (!cond) failed += 1;
+};
+
+try {
+  // ---- plan mode, approval and refusal (no browser needed for plan mode) ----
+  const planDir = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-plan-'));
+  const approve = path.join(here, '..', 'skills', 'demo-video', 'scripts', 'approve.mjs');
+  const fixtureScript = path.join(here, 'fixture-walkthrough.mjs');
+  const runsBefore = fs.existsSync(outRoot) ? fs.readdirSync(outRoot).length : 0;
+  const plan = await runFixtureWalkthrough({ baseUrl, outRoot, mode: 'plan', planDir });
+  const sb = fs.readFileSync(path.join(planDir, 'storyboard.md'), 'utf8');
+  check('plan mode writes storyboard.md with every chapter', ['Sign in', 'Fill in a request', 'Look at the list as another person'].every((c) => sb.includes(c)) && plan.mode === 'plan');
+  check('storyboard lists every step', ['Open the sign-in page', 'Choose Ada Fixture', 'Press Submit', 'Open the Slow report', 'Open the Requests list'].every((x) => sb.includes(x)));
+  check('storyboard flags the data-changing step', /Press Submit.*(changes data|DATA)/i.test(sb), 'row for Press Submit');
+  check('storyboard has environment, reset command, estimate and open questions', /local/i.test(sb) && sb.includes('none needed') && /estimated/i.test(sb) && sb.includes('Open questions'));
+  check('plan mode records nothing', !fs.existsSync(outRoot) || fs.readdirSync(outRoot).length === runsBefore);
+
+  let refused = '';
+  try { await runFixtureWalkthrough({ baseUrl, outRoot, planDir }); } catch (e) { refused = e.message; }
+  check('recording without approval refuses', /Not approved/.test(refused), refused.slice(0, 60));
+
+  // changing the script after approval refuses (uses a scratch script so the real one stays untouched)
+  const scratch = path.join(planDir, 'scratch-walkthrough.mjs');
+  fs.writeFileSync(scratch, '// version 1');
+  await runFixtureWalkthrough({ baseUrl, outRoot, mode: 'plan', planDir, scriptPath: scratch });
+  const ap0 = spawnSync(process.execPath, [approve, scratch, planDir], { encoding: 'utf8' });
+  fs.appendFileSync(scratch, '// version 2');
+  let refused2 = '';
+  try { await runFixtureWalkthrough({ baseUrl, outRoot, planDir, scriptPath: scratch }); } catch (e) { refused2 = e.message; }
+  check('changing the script after approval refuses', ap0.status === 0 && /changed after approval/.test(refused2), refused2.slice(0, 60));
+
+  // approve the real fixture script
+  const ap = spawnSync(process.execPath, [approve, fixtureScript, planDir], { encoding: 'utf8' });
+  const approvedHash = (ap.stdout.match(/Hash: ([0-9a-f]{64})/) || [])[1];
+  check('approve.mjs writes storyboard.approved.json with the sha256', ap.status === 0 && !!approvedHash && JSON.parse(fs.readFileSync(path.join(planDir, 'storyboard.approved.json'), 'utf8')).scriptSha256 === approvedHash);
+  const recArgs = { baseUrl, outRoot, planDir, approvedHash: approvedHash && approvedHash.slice(0, 12) };
+
+  const before = fs.existsSync(outRoot) ? fs.readdirSync(outRoot).length : 0;
+  const t0 = Date.now();
+  const r1 = await runFixtureWalkthrough(recArgs);
+  check('recording works after approval', !!r1.runDir && fs.existsSync(path.join(r1.runDir, 'results.json')));
+  const secs = ((Date.now() - t0) / 1000).toFixed(0);
+  console.log(`\nFixture run 1 took ${secs} s: ${r1.runDir}\n`);
+
+  const runs = fs.readdirSync(outRoot);
+  check('a new run folder was produced', runs.length === before + 1 && fs.existsSync(r1.runDir));
+
+  const results = JSON.parse(fs.readFileSync(path.join(r1.runDir, 'results.json'), 'utf8'));
+  const clipFiles = fs.readdirSync(path.join(r1.runDir, 'clips')).filter((f) => f.endsWith('.webm'));
+  const sizes = clipFiles.map((f) => `${f} ${(fs.statSync(path.join(r1.runDir, 'clips', f)).size / 1024).toFixed(0)} KB`);
+  console.log('Clips:\n  ' + sizes.join('\n  '));
+  check('clip count = chapters + 2 cards', clipFiles.length === results.chapters.length + 2, `${clipFiles.length} clips, ${results.chapters.length} chapters`);
+  check('every clip is larger than 20 KB', clipFiles.every((f) => fs.statSync(path.join(r1.runDir, 'clips', f)).size > 20 * 1024));
+
+  const ch = JSON.parse(fs.readFileSync(path.join(r1.runDir, 'chapters.json'), 'utf8'));
+  check('chapters.json start times increase', ch.length === clipFiles.length && ch.every((c, i) => i === 0 ? c.start === 0 : c.start > ch[i - 1].start));
+  check('chapters.txt exists', fs.existsSync(path.join(r1.runDir, 'chapters.txt')));
+
+  const report = fs.readFileSync(path.join(r1.runDir, 'report.md'), 'utf8');
+  const rows = report.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| Chapter'));
+  check('report.md has PASS rows', rows.filter((l) => l.includes('| PASS |')).length >= 5);
+  check('report.md has exactly one DIFFERENT row', rows.filter((l) => l.includes('| DIFFERENT |')).length === 1);
+  check('the DIFFERENT row says what was seen', rows.some((l) => l.includes('| DIFFERENT |') && l.includes('4 requests listed')));
+
+  const withShots = results.steps.filter((s) => s.shot);
+  check('every step has a screenshot file', withShots.length === results.steps.length && withShots.every((s) => fs.existsSync(path.join(r1.runDir, s.shot))));
+  check('caption bar was in the DOM at every screenshot', results.steps.every((s) => s.captionPresent === true));
+  check('caption bar present on a step right after a navigation', results.steps.some((s) => s.navigatedDuringStep && s.captionPresent));
+  check('caption text carries the result line', results.steps.every((s) => s.captionText.includes('RESULT')));
+
+  const player = fs.readFileSync(path.join(r1.runDir, 'player.html'), 'utf8');
+  check('player.html references every clip', clipFiles.every((f) => player.includes(`clips/${f}`)));
+
+  const hasMp4 = fs.existsSync(path.join(r1.runDir, 'full.mp4'));
+  check('ffmpeg absence is reported, not an error', hasMp4 || (results.ffmpeg.available === false && report.includes('ffmpeg was not found')), hasMp4 ? 'ffmpeg present, full.mp4 written' : 'no ffmpeg, noted in report');
+
+  const fq = results.frameQuality || {};
+  check('frame monitor ran and wrote data to results.json', fq.enabled === true && fq.clipsChecked === clipFiles.length, `${fq.samples} samples`);
+  check('zero blank frames', fq.blankFrameRuns === 0, `runs: ${fq.blankFrameRuns}`);
+  check('zero unjustified static holds', fq.unjustifiedStaticRuns === 0, `runs: ${fq.unjustifiedStaticRuns}`);
+  const slow = results.steps.find((x) => x.label === 'Open the Slow report');
+  check('the slow page (7 s) triggered a progress note', !!slow && slow.progressNotes >= 1 && fq.progressNotes >= 1, `notes: ${slow && slow.progressNotes}`);
+  check('report.md has a Frame quality section', report.includes('## Frame quality'));
+  console.log(`Frame quality: ${fq.samples} samples, blank ${fq.blankFrameRuns}, unjustified ${fq.unjustifiedStaticRuns}, justified long holds ${fq.justifiedLongHolds}, progress notes ${fq.progressNotes}, max first content ${fq.maxFirstContentMs} ms`);
+
+  const r2 = await runFixtureWalkthrough(recArgs);
+  check('a second run creates a second folder', r2.runDir !== r1.runDir && fs.existsSync(r2.runDir));
+  check('the first run is intact after the second', fs.existsSync(path.join(r1.runDir, 'results.json')) && fs.readdirSync(path.join(r1.runDir, 'clips')).length === clipFiles.length);
+} catch (e) {
+  console.log('FAIL  test run crashed: ' + e.stack);
+  failed += 1;
+} finally {
+  server.close();
+}
+console.log(failed ? `\n${failed} check(s) failed` : '\nAll checks passed');
+process.exit(failed ? 1 : 0);

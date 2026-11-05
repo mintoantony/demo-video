@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Fixture sign-in</title><link rel="stylesheet" href="style.css"></head>
+<body><header><b>Fixture Garden Co</b></header>
+<main><h1>Who are you?</h1>
+<div class="cards">
+<div class="card" id="p-ada" data-name="Ada Fixture" data-role="manager">Ada Fixture<br><small>Manager</small></div>
+<div class="card" id="p-ben" data-name="Ben Sample" data-role="staff">Ben Sample<br><small>Staff</small></div>
+</div></main>
+<script>
+document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){
+ localStorage.setItem('fixtureUser',JSON.stringify({name:c.dataset.name,role:c.dataset.role}));
+ location.href='dashboard.html';};});
+</script></body></html>

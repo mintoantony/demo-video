@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>New request</title><link rel="stylesheet" href="style.css"><script src="common.js"></script></head>
+<body><header></header><main><h1>New request</h1>
+<label>Plant name<input id="plant"></label>
+<label>Note<input id="note"></label>
+<button id="submit" disabled>Submit</button> <p id="saved"></p></main>
+<script>
+var p=document.getElementById('plant'),n=document.getElementById('note'),b=document.getElementById('submit');
+function upd(){b.disabled=!(p.value.trim()&&n.value.trim());}
+p.oninput=upd;n.oninput=upd;
+b.onclick=function(){document.getElementById('saved').textContent='Request saved (demo only, nothing is stored).';};
+</script></body></html>
