@@ -10,7 +10,7 @@ recorded in the report. The original clips are only ever read.
 """
 import argparse, shutil, subprocess, sys, tempfile
 from pathlib import Path
-from common import (reexec_in_venv, sha256_file, load_json, find_ffmpeg, ffmpeg_info,
+from common import (reexec_in_venv, sha256_file, load_json, load_results, find_ffmpeg, ffmpeg_info,
                     srt_time, voice_dir, SKILL_DIR, GAP)
 
 reexec_in_venv()
@@ -128,7 +128,7 @@ def main():
     vd = voice_dir(run_dir)
     sha = check_approval(vd)
     doc = load_json(vd / "narration.json")
-    res = load_json(run_dir / "results.json")
+    res = load_results(run_dir)
 
     engine, note = a.engine, ""
     voice = a.voice or doc.get("voice") or DEFAULT_VOICE

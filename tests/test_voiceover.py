@@ -12,7 +12,6 @@ _RUNS = sorted(d for d in (ROOT / "tests" / "out").glob("2*") if (d / "chapters.
 if not _RUNS:
     sys.exit("No recorded run in tests/out. Run: node tests/run-tests.mjs")
 SRC_RUN = _RUNS[-1]  # newest fixture run
-PY = SKILL / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
 PY = str(PY if PY.exists() else sys.executable)
 sys.path.insert(0, str(SCRIPTS))
 import common  # noqa: E402
