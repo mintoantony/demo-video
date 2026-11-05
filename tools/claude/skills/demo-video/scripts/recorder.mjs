@@ -1,6 +1,6 @@
 // recorder.mjs - generic walkthrough recording engine (Playwright, webm clips).
 //
-// One browser context per chapter and per card, so every chapter is its own clip.
+// One browser context and one page per segment: chapters share it, so unsaved input survives. A segment ends only on `fresh: true` or finish().
 // A caption bar is drawn into the page and re-applied after every navigation.
 // Nothing here knows about any particular app.
 //
@@ -36,29 +36,41 @@ function captionInit(arg) {
   const ID = '__demo_cap';
   const IID = '__demo_intro';
   const E = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  function intro() {
-    try {
-      const alive = arg && arg.until && Date.now() < arg.until;
-      let el = document.getElementById(IID);
-      if (!alive) { if (el) el.remove(); return; }
-      if (el || !document.documentElement) return;
+  // A card (chapter intro or closing card) is a full-screen overlay driven by the same
+  // sessionStorage state as the caption bar, so it survives navigations and never replaces the page.
+  function drawCard(s) {
+    let el = document.getElementById(IID);
+    if (!s || !s.card) { if (el) el.remove(); return false; }
+    if (!document.documentElement) return true;
+    if (!el) {
       el = document.createElement('div');
       el.id = IID;
       el.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483647;background:#0b1530;color:#fff;' +
         'font-family:Segoe UI,Arial,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;';
-      el.innerHTML = '<div style="font-size:64px;font-weight:700;color:#ffd400;max-width:80%">Chapter: ' + E(arg.title) + '</div>' +
-        (arg.who ? '<div style="font-size:34px;margin-top:22px;max-width:80%">Acting as: ' + E(arg.who) + '</div>' : '');
       document.documentElement.appendChild(el);
-    } catch (e) { /* never break the page */ }
+    }
+    const key = JSON.stringify(s.card);
+    if (el.getAttribute('data-key') !== key) {
+      let h = '<div style="font-size:64px;font-weight:700;color:#ffd400;max-width:80%">' + E(s.card.title) + '</div>';
+      (s.card.lines || []).forEach((l) => { h += '<div style="font-size:34px;margin-top:22px;max-width:80%">' + E(l) + '</div>'; });
+      el.innerHTML = h;
+      el.setAttribute('data-key', key);
+    }
+    return true;
   }
   function render() {
     try {
       let raw = null;
       try { raw = sessionStorage.getItem('__demoCap'); } catch (e) { /* storage blocked */ }
       let el = document.getElementById(ID);
-      if (!raw) { if (el) el.remove(); return; }
+      if (!raw) { if (el) el.remove(); drawCard(null); return; }
       if (!document.documentElement) return;
       const s = JSON.parse(raw);
+      if (drawCard(s)) {
+        if (el) el.remove();
+        document.documentElement.style.paddingBottom = '0px';
+        return;
+      }
       if (!el) {
         el = document.createElement('div');
         el.id = ID;
@@ -82,7 +94,7 @@ function captionInit(arg) {
       document.documentElement.style.paddingBottom = Math.min(300, el.offsetHeight) + 'px';
     } catch (e) { /* never break the page */ }
   }
-  function all() { intro(); render(); }
+  function all() { render(); }
   window.__demoRender = all;
   try {
     const mo = new MutationObserver(all);
@@ -291,15 +303,15 @@ export async function createRecorder(opts = {}) {
 
   const browser = await chromium.launch({ headless: o.headless, slowMo: o.slowMo });
   const t0 = Date.now();
-  const clips = [];      // { n, kind, title, file, durationSec, startSec }
-  const steps = [];      // one entry per step
+  const ff = findFfmpeg();   // path to ffmpeg, or null
+  const clips = [];      // { n, kind, title, file, durationSec, startSec, segment, segStart, segEnd, frames }
+  const steps = [];
   const chapters = [];   // { title, actor, clip }
   const notes = [];
-  let storage;           // carried sign-in
-  let lastUrl;           // where the previous chapter ended; the next chapter continues there
-  let n = 0;             // clip counter
-  let cur = null;        // { page, ctx, chapterTitle, actor }
-  let finished = false;
+  const items = [];      // every card and chapter, in order
+  const segments = [];   // one per browser context
+  let storage;           // carried sign-in (only used to seed a non-fresh new segment)
+  let n = 0; let cur = null; let curSeg = null; let finished = false;
 
   const log = (m) => console.log(`[${mmss((Date.now() - t0) / 1000)}] ${m}`);
   const url = (u) => (/^https?:/i.test(u) || !o.baseUrl ? u : new URL(u, o.baseUrl).toString());
@@ -366,45 +378,113 @@ export async function createRecorder(opts = {}) {
     return { samples, async stop() { stopFlag = true; await loop; } };
   }
 
-  async function closeClip(ctx, page, kind, title, startedMs, mon, firstContentMs) {
-    const durationSec = (Date.now() - startedMs) / 1000;
-    const video = page.video();
-    let frames = null;
-    if (mon) {
-      try { await mon.stop(); } catch { /* ignore */ }
-      frames = { ...analyseFrames(mon.samples, { maxStaticSec: o.maxHold / 1000, wordsPerSec: o.wordsPerSec }), firstContentMs };
-    }
-    await ctx.close();
-    n += 1;
-    const file = `${pad2(n)}-${slugify(kind === 'chapter' ? title : kind)}.webm`;
+  // ---- Segments: one browser context, one page, one video. Chapters and cards are time ranges in it.
+
+  const isLive = (seg) => /^https?:/i.test(seg.page.url());
+  const segFile = (i) => path.join(tmpDir, `segment-${i}.webm`);
+
+  // Write (or clear, with null) the caption/card state the init script draws. Survives navigations.
+  async function apply(seg, s) {
+    seg.state.current = s;
     try {
-      const src = await video.path();
-      fs.renameSync(src, path.join(clipsDir, file));
+      await seg.page.evaluate((v) => {
+        try { if (v) sessionStorage.setItem('__demoCap', JSON.stringify(v)); else sessionStorage.removeItem('__demoCap'); } catch (e) { /* storage blocked */ }
+        if (window.__demoRender) window.__demoRender();
+      }, s);
+    } catch { /* mid navigation: the hooks below re-apply */ }
+  }
+
+  async function openSegment(fresh) {
+    const ctxOpts = { viewport: o.viewport, recordVideo: { dir: tmpDir, size: o.viewport } };
+    if (!fresh && storage) ctxOpts.storageState = storage;
+    const ctx = await browser.newContext(ctxOpts);
+    await ctx.addInitScript(captionInit, {});
+    const started = Date.now();
+    const page = await ctx.newPage();
+    const seg = { index: segments.length + 1, ctx, page, started, mon: null, items: [], firstContentMs: null, state: { current: null, navs: 0 } };
+    const reapply = () => { if (seg.state.current) apply(seg, seg.state.current); };
+    page.on('framenavigated', (f) => { if (f === page.mainFrame()) { seg.state.navs += 1; reapply(); } });
+    page.on('domcontentloaded', reapply);
+    page.on('load', reapply);
+    if (o.frameMonitor) seg.mon = startMonitor(page, started);
+    segments.push(seg);
+    curSeg = seg;
+    return seg;
+  }
+
+  // A card or a chapter: a time range [startSec, endSec) in its segment's video.
+  function newItem(seg, kind, title) {
+    const prev = seg.items[seg.items.length - 1];
+    n += 1;
+    const slug = slugify(kind === 'chapter' ? title : kind);
+    const it = {
+      n, kind, title, seg, endSec: null,
+      startSec: prev ? (prev.endSec ?? (Date.now() - seg.started) / 1000) : 0,
+      file: ff ? `clips/${pad2(n)}-${slug}.webm` : `clips/segment-${seg.index}.webm`,
+    };
+    seg.items.push(it);
+    items.push(it);
+    return it;
+  }
+  const endItem = (seg, it) => { it.endSec = (Date.now() - seg.started) / 1000; };
+
+  async function closeSegment() {
+    const seg = curSeg;
+    if (!seg) return;
+    curSeg = null; cur = null;
+    const endSec = (Date.now() - seg.started) / 1000;
+    if (seg.mon) { try { await seg.mon.stop(); } catch { /* ignore */ } }
+    try { storage = await seg.ctx.storageState(); } catch { /* ignore */ }
+    const video = seg.page.video();
+    await seg.ctx.close();
+    seg.durationSec = endSec;
+    seg.saved = false;
+    try {
+      fs.renameSync(await video.path(), segFile(seg.index));
+      seg.saved = true;
     } catch (e) {
-      notes.push(`Clip ${file} could not be saved: ${firstLine(e.message)}`);
+      notes.push(`Segment ${seg.index} video could not be saved: ${firstLine(e.message)}`);
     }
-    const startSec = clips.reduce((a, c) => a + c.durationSec, 0);
-    const clip = { n, kind, title, file: `clips/${file}`, durationSec: +durationSec.toFixed(2), startSec: +startSec.toFixed(2) };
-    if (frames) clip.frames = frames;
-    clips.push(clip);
-    return clip;
+    const last = seg.items[seg.items.length - 1];
+    if (last) last.endSec = endSec;
+    seg.items.forEach((it, i) => {
+      if (it.endSec == null) it.endSec = endSec;
+      let frames = null;
+      if (seg.mon) {
+        const samples = seg.mon.samples.filter((x) => x.t >= it.startSec && x.t < it.endSec).map((x) => ({ ...x, t: x.t - it.startSec }));
+        frames = { ...analyseFrames(samples, { maxStaticSec: o.maxHold / 1000, wordsPerSec: o.wordsPerSec }), firstContentMs: i === 0 ? (seg.firstContentMs ?? 0) : 0 };
+      }
+      const startSec = clips.reduce((a, c) => a + c.durationSec, 0);
+      const clip = {
+        n: it.n, kind: it.kind, title: it.title, file: it.file,
+        durationSec: +(it.endSec - it.startSec).toFixed(2), startSec: +startSec.toFixed(2),
+        segment: seg.index, segStart: +it.startSec.toFixed(2), segEnd: +it.endSec.toFixed(2),
+      };
+      if (frames) clip.frames = frames;
+      clips.push(clip);
+    });
+  }
+
+  // Show a full-screen card for ms. On a live page it is an overlay (never replaces the app);
+  // on a blank page (start of a segment) it is plain HTML. `after` is the caption state to restore.
+  async function showCard(seg, title, lines, ms, after) {
+    const live = isLive(seg);
+    try {
+      if (live) await apply(seg, { card: { title, lines } });
+      else { seg.state.current = null; await seg.page.setContent(cardHtml(title, lines)); }
+      if (seg.firstContentMs == null) seg.firstContentMs = Date.now() - seg.started;
+      await sleep(ms);
+    } catch (e) { notes.push(`card "${title}": ${firstLine(e.message)}`); }
+    if (live) await apply(seg, after ?? null);
   }
 
   async function card(kind, title, lines, ms) {
-    const ctx = await browser.newContext({ viewport: o.viewport, recordVideo: { dir: tmpDir, size: o.viewport } });
-    const started = Date.now();
-    const page = await ctx.newPage();
-    let mon = null;
-    let firstContentMs = null;
-    try {
-      await page.setContent(cardHtml(title, lines));
-      firstContentMs = Date.now() - started;
-      if (o.frameMonitor) mon = startMonitor(page, started);
-      await sleep(ms ?? o.cardMs);
-    } catch (e) { notes.push(`${kind} card: ${firstLine(e.message)}`); }
-    const clip = await closeClip(ctx, page, kind, title, started, mon, firstContentMs);
+    const seg = curSeg || await openSegment(false);
+    const it = newItem(seg, kind, title);
+    await showCard(seg, title, lines, ms ?? o.cardMs, null);
+    endItem(seg, it);
     log(`${kind} card: ${title}`);
-    return clip;
+    return it;
   }
 
   async function settle(page, extra = 300) {
@@ -442,7 +522,7 @@ export async function createRecorder(opts = {}) {
 
   const api = {
     runDir, clipsDir, shotsDir,
-    get page() { return cur?.page; },
+    get page() { return (cur || curSeg)?.page; },
 
     async titleCard(extraLines = []) {
       const lines = [o.subtitle, ...extraLines].filter(Boolean);
@@ -455,6 +535,8 @@ export async function createRecorder(opts = {}) {
       return card('closing', 'End of walkthrough', lines ?? auto, o.cardMs);
     },
 
+    // All chapters share one browser context and one page, so unsaved input survives a chapter
+    // boundary. Only `fresh: true` closes the context and starts a new, signed-out one.
     async chapter(title, optsOrFn, maybeFn) {
       const copts = typeof optsOrFn === 'function' ? {} : (optsOrFn || {});
       const fn = typeof optsOrFn === 'function' ? optsOrFn : maybeFn;
@@ -462,32 +544,27 @@ export async function createRecorder(opts = {}) {
         log(`chapter skipped (only="${o.only}"): ${title}`);
         return null;
       }
-      const ctx = await browser.newContext({
-        viewport: o.viewport,
-        recordVideo: { dir: tmpDir, size: o.viewport },
-        ...(storage && !copts.fresh ? { storageState: storage } : {}),
-      });
-      await ctx.addInitScript(captionInit, { title, who: copts.actor || '', until: Date.now() + o.introMs });
-      const started = Date.now();
-      const page = await ctx.newPage();
-      // Intro card first, so the clip never opens on an empty page.
-      await page.setContent(cardHtml('Chapter: ' + title, copts.actor ? ['Acting as: ' + copts.actor] : []), { waitUntil: 'domcontentloaded' });
-      const firstContentMs = Date.now() - started;
-      const mon = o.frameMonitor ? startMonitor(page, started) : null;
-      const state = { current: null, navs: 0, kicker: `Chapter: ${title}`, who: copts.actor || '' };
-      cur = { page, ctx, chapterTitle: title, actor: copts.actor || '', state, started, mon, firstContentMs };
-      const apply = async (s) => {
-        state.current = s;
-        try {
-          await page.evaluate((v) => { try { sessionStorage.setItem('__demoCap', JSON.stringify(v)); } catch (e) { /* blocked */ } if (window.__demoRender) window.__demoRender(); }, s);
-        } catch { /* page is navigating; re-applied on the next load event */ }
-      };
-      state.apply = apply;
-      const reapply = () => { if (state.current) apply(state.current); };
-      page.on('framenavigated', (f) => { if (f === page.mainFrame()) { state.navs += 1; reapply(); } });
-      page.on('domcontentloaded', reapply);
-      page.on('load', reapply);
-      await apply({ kicker: state.kicker, who: state.who, step: '' });
+      if (copts.fresh && curSeg) await closeSegment();
+      const seg = curSeg || await openSegment(!!copts.fresh);
+      cur = seg;
+      const state = seg.state;
+      const page = seg.page;
+      const it = newItem(seg, 'chapter', title);
+      const kicker = `Chapter: ${title}`;
+      const who = copts.actor || '';
+      const ap = (s) => apply(seg, s);
+      const introCard = { card: { title: kicker, lines: copts.actor ? ['Acting as: ' + copts.actor] : [] } };
+      const tIntro = Date.now();
+      // Intro card: an overlay on a live page; plain HTML only while the page is still blank.
+      try {
+        if (isLive(seg)) await ap(introCard);
+        else {
+          state.current = null;
+          await page.setContent(cardHtml(introCard.card.title, introCard.card.lines), { waitUntil: 'domcontentloaded' });
+          state.current = introCard;
+        }
+        if (seg.firstContentMs == null) seg.firstContentMs = Date.now() - seg.started;
+      } catch (e) { notes.push(`chapter card "${title}": ${firstLine(e.message)}`); }
       log(`chapter: ${title}${copts.actor ? ` (as ${copts.actor})` : ''}`);
 
       let stepNo = 0;
@@ -496,7 +573,7 @@ export async function createRecorder(opts = {}) {
         stepNo += 1;
         const startedStepMs = Date.now();
         const navsBefore = state.navs;
-        await apply({ kicker: state.kicker, who: state.who, step: label, expect });
+        await ap({ kicker, who, step: label, expect });
         await sleep(readMs(`${label} ${expect || ''}`));
         let status = 'PASS';
         let seen = '';
@@ -511,7 +588,7 @@ export async function createRecorder(opts = {}) {
           lastNote = now;
           progressNotes += 1;
           const secs = Math.round((now - tWait) / 1000);
-          apply({ kicker: state.kicker, who: state.who, step: label, expect, result: `Still working... waiting for the page (${secs} s)`, status: 'WAIT' });
+          ap({ kicker, who, step: label, expect, result: `Still working... waiting for the page (${secs} s)`, status: 'WAIT' });
         }, 500) : null;
         try {
           try {
@@ -538,7 +615,7 @@ export async function createRecorder(opts = {}) {
           ? 'RESULT: as expected' + (seen ? ` - ${seen}` : '')
           : status === 'DIFFERENT' ? `RESULT: DIFFERENT - what was actually seen: ${seen}`
             : `RESULT: could not do this step - ${seen}`;
-        await apply({ kicker: state.kicker, who: state.who, step: label, expect, result: resultText, status });
+        await ap({ kicker, who, step: label, expect, result: resultText, status });
         await sleep(Math.max(sopts.pause ?? o.stepPause, readMs(resultText)));
         // Prove the bar is on screen right now, then take the picture.
         let captionPresent = false;
@@ -556,11 +633,12 @@ export async function createRecorder(opts = {}) {
         } catch { /* page mid-navigation */ }
         const shot = `shots/${pad2(chapterIndex)}-${pad2(stepNo)}-${slugify(label)}.png`;
         try { await page.screenshot({ path: path.join(runDir, shot) }); } catch (e) { notes.push(`screenshot ${shot}: ${firstLine(e.message)}`); }
+        const segmentSec = (startedStepMs - seg.started) / 1000;
         const entry = {
           chapter: title, chapterIndex, step: stepNo, label, expect: expect || '', status, seen,
           captionPresent, captionText, navigatedDuringStep: state.navs > navsBefore, shot,
-          atSec: +((startedStepMs - started) / 1000).toFixed(1), progressNotes,
-          changesData: !!sopts.changesData, irreversible: !!sopts.irreversible,
+          atSec: +(segmentSec - it.startSec).toFixed(1), segment: seg.index, segmentSec: +segmentSec.toFixed(1), clip: it.file,
+          progressNotes, changesData: !!sopts.changesData, irreversible: !!sopts.irreversible,
         };
         steps.push(entry);
         log(`${entry.chapter} / ${stepNo} ${status}: ${label}${seen ? ' | ' + seen : ''}`);
@@ -571,42 +649,38 @@ export async function createRecorder(opts = {}) {
         page, step, rec: api,
         click: (l) => api.click(l),
         type: (l, text) => api.type(l, text),
-        goto: async (u) => { await withProgress(() => page.goto(url(u), { waitUntil: 'domcontentloaded' }), (s) => apply({ kicker: state.kicker, who: state.who, step: 'Loading ' + u, result: `Still loading... (${s} s)`, status: 'WAIT' })); await settle(page); },
+        goto: async (u) => { await withProgress(() => page.goto(url(u), { waitUntil: 'domcontentloaded' }), (s) => ap({ kicker, who, step: 'Loading ' + u, result: `Still loading... (${s} s)`, status: 'WAIT' })); await settle(page); },
         settle: (ms) => settle(page, ms),
       };
       try {
-        // A chapter starts at its own url, or else continues on the page where the previous
-        // chapter ended (the intro card replaced it, so go back there). A fresh chapter with no url
-        // starts on the card and its first step navigates.
-        const startUrl = copts.url ? url(copts.url) : (!copts.fresh && lastUrl) ? lastUrl : null;
-        if (startUrl) {
-          await withProgress(() => page.goto(startUrl, { waitUntil: 'domcontentloaded' }), async (s) => {
-            try { await page.evaluate((t) => { let e = document.getElementById('__demo_load'); if (!e) { e = document.createElement('div'); e.id = '__demo_load'; e.style.cssText = 'font-size:30px;margin-top:30px;color:#9fe8ff'; document.body.appendChild(e); } e.textContent = t; }, `Loading the first page... (${s} s)`); } catch { /* card page is gone */ }
-          });
+        if (copts.url) {
+          await withProgress(() => page.goto(url(copts.url), { waitUntil: 'domcontentloaded' }), (s) => ap({ card: { title: kicker, lines: [...introCard.card.lines, `Still loading the first page... (${s} s)`] } }));
           await settle(page);
+          await ap(introCard);   // the page is live now: the overlay covers the app, never replaces it
         }
-        const left = o.introMs - (Date.now() - started);
+        const left = o.introMs - (Date.now() - tIntro);
         if (left > 0) await sleep(left);
-        await apply({ kicker: state.kicker, who: state.who, step: '' });
+        await ap({ kicker, who, step: '' });
         await fn(helpers);
       } catch (e) {
         notes.push(`Chapter "${title}" stopped early: ${firstLine(e.message)}`);
+        const segmentSec = (Date.now() - seg.started) / 1000;
         steps.push({
           chapter: title, chapterIndex, step: ++stepNo, label: '(chapter stopped early)', expect: '', status: 'COULD NOT DO',
           seen: firstLine(e.message), captionPresent: false, captionText: '', navigatedDuringStep: false, shot: '', atSec: 0,
+          segment: seg.index, segmentSec: +segmentSec.toFixed(1), clip: it.file,
         });
         log(`chapter "${title}" crashed: ${firstLine(e.message)}`);
       }
-      try { storage = await ctx.storageState(); } catch { /* keep the old sign-in */ }
-      try { const u = page.url(); if (/^https?:/i.test(u)) lastUrl = u; } catch { /* page closed */ }
+      endItem(seg, it);
+      try { storage = await seg.ctx.storageState(); } catch { /* keep the old sign-in */ }
       cur = null;
-      const clip = await closeClip(ctx, page, 'chapter', title, started, mon, firstContentMs);
-      chapters.push({ title, actor: copts.actor || '', clip: clip.file, steps: stepNo });
-      return clip;
+      chapters.push({ title, actor: copts.actor || '', clip: it.file, steps: stepNo });
+      return it;
     },
 
     async click(l) {
-      const page = cur.page;
+      const page = (cur || curSeg).page;
       const loc = asLoc(page, l);
       await loc.waitFor({ state: 'visible', timeout: 10000 });
       await highlight(loc);
@@ -615,7 +689,7 @@ export async function createRecorder(opts = {}) {
     },
 
     async type(l, text) {
-      const loc = asLoc(cur.page, l);
+      const loc = asLoc((cur || curSeg).page, l);
       await loc.waitFor({ state: 'visible', timeout: 10000 });
       await highlight(loc);
       await loc.fill('', { timeout: 10000 });
@@ -626,11 +700,12 @@ export async function createRecorder(opts = {}) {
     async finish() {
       if (finished) return api.result;
       finished = true;
-      if (cur) { try { await closeClip(cur.ctx, cur.page, 'chapter', cur.chapterTitle, cur.started, cur.mon, cur.firstContentMs); } catch { /* ignore */ } cur = null; }
+      try { await closeSegment(); } catch (e) { notes.push(`closing the last segment: ${firstLine(e.message)}`); }
       try { if (helper) await helper.ctx.close(); } catch { /* ignore */ }
       try { await browser.close(); } catch { /* ignore */ }
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* own temp folder only */ }
+      // writeOutputs reads the segment videos from tmpDir, so it runs before the cleanup.
       api.result = writeOutputs();
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* own temp folder only */ }
       return api.result;
     },
   };
@@ -663,29 +738,64 @@ export async function createRecorder(opts = {}) {
     };
   }
 
-  function ffmpegAvailable() {
-    try { return spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' }).status === 0; } catch { return false; }
+  // Copy every saved segment video into clips/ as segment-N.webm.
+  function copySegments() {
+    for (const seg of segments) {
+      if (!seg.saved) continue;
+      try { fs.copyFileSync(segFile(seg.index), path.join(clipsDir, `segment-${seg.index}.webm`)); }
+      catch (e) { notes.push(`segment ${seg.index} copy: ${firstLine(e.message)}`); }
+    }
   }
 
   function writeOutputs() {
     const summary = summarise();
     const total = clips.reduce((a, c) => a + c.durationSec, 0);
-    const timeline = clips.map((c) => ({ index: c.n, kind: c.kind, title: c.title, file: c.file, start: c.startSec, startText: mmss(c.startSec), duration: c.durationSec }));
+    let mode = 'segments';
+    let ffmpeg = { available: false, mode, note: 'ffmpeg was not found on PATH (or is disabled with DEMO_FFMPEG=none), so there is no single full.mp4 and no per-chapter clips. Chapters share segment videos; player.html seeks to each chapter.' };
 
-    // full.mp4 only if ffmpeg is already on PATH. Never installed here.
-    let ffmpeg = { available: false, note: 'ffmpeg was not found on PATH, so there is no single full.mp4. Use the per-chapter clips or player.html, which plays them in order.' };
-    if (ffmpegAvailable() && clips.length) {
-      const list = clips.map((c) => `file '${c.file}'`).join('\n') + '\n';
-      fs.writeFileSync(path.join(runDir, 'concat.txt'), list);
-      const r = spawnSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', 'full.mp4'], { cwd: runDir, encoding: 'utf8' });
-      ffmpeg = r.status === 0 ? { available: true, note: 'full.mp4 written with ffmpeg.' } : { available: true, note: `ffmpeg was found but failed: ${firstLine(r.stderr)}` };
+    if (ff && clips.length) {
+      // Cut one clip per card or chapter out of its segment, then join them into full.mp4.
+      let cutFailed = '';
+      for (const c of clips) {
+        const src = segFile(c.segment);
+        if (!fs.existsSync(src)) { cutFailed = `segment ${c.segment} video is missing`; break; }
+        const r = spawnSync(ff, ['-y', '-i', src, '-ss', String(c.segStart), '-to', String(c.segEnd),
+          '-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '2M', '-an', path.join(runDir, c.file)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+        if (r.status !== 0) { cutFailed = `cutting ${c.file}: ${firstLine(r.stderr)}`; break; }
+      }
+      if (cutFailed) {
+        ffmpeg = { available: true, mode, path: ff, note: `ffmpeg was found but failed (${cutFailed}); falling back to segment videos.` };
+      } else {
+        mode = 'clips';
+        const list = clips.map((c) => `file '${c.file}'`).join('\n') + '\n';
+        fs.writeFileSync(path.join(runDir, 'concat.txt'), list);
+        const r = spawnSync(ff, ['-y', '-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', 'full.mp4'], { cwd: runDir, encoding: 'utf8', maxBuffer: 1 << 26 });
+        ffmpeg = r.status === 0
+          ? { available: true, mode, path: ff, note: 'full.mp4 written with ffmpeg.' }
+          : { available: true, mode, path: ff, note: `ffmpeg was found but joining failed: ${firstLine(r.stderr)}` };
+      }
     }
+
+    if (mode === 'segments') {
+      // Every clip points at its shared segment video instead.
+      const remap = new Map();
+      for (const c of clips) { const f = `clips/segment-${c.segment}.webm`; remap.set(c.file, f); c.file = f; }
+      for (const s of steps) if (s.clip && remap.has(s.clip)) s.clip = remap.get(s.clip);
+      for (const c of chapters) if (remap.has(c.clip)) c.clip = remap.get(c.clip);
+      copySegments();
+    }
+
+    const fullWritten = mode === 'clips' && ffmpeg.note.startsWith('full');
+    const timeline = clips.map((c) => ({
+      index: c.n, kind: c.kind, title: c.title, file: c.file, start: c.startSec, startText: mmss(c.startSec), duration: c.durationSec,
+      segment: c.segment, segStart: c.segStart, segEnd: c.segEnd,
+    }));
 
     const fq = frameQuality();
     const results = {
       title: o.title, subtitle: o.subtitle, baseUrl: o.baseUrl, viewport: o.viewport,
       startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
-      totalSeconds: +total.toFixed(1), summary, ffmpeg, frameQuality: fq, notes, chapters, clips, steps,
+      totalSeconds: +total.toFixed(1), mode, summary, ffmpeg, frameQuality: fq, notes, chapters, clips, steps,
     };
     fs.writeFileSync(path.join(runDir, 'results.json'), JSON.stringify(results, null, 2));
     fs.writeFileSync(path.join(runDir, 'chapters.json'), JSON.stringify(timeline, null, 2));
@@ -695,6 +805,7 @@ export async function createRecorder(opts = {}) {
     const md = [
       `# ${o.title}`, '', o.subtitle ? `${o.subtitle}\n` : '',
       `Run: ${startedAt.toISOString()} | Length: ${mmss(total)} | Steps: ${summary.steps} | As expected: ${summary.pass} | Different: ${summary.different} | Could not do: ${summary.couldNot}`, '',
+      `Mode: ${mode === 'clips' ? 'clips (ffmpeg cut one clip per chapter and card from the shared segment videos)' : 'segments (chapters share segment videos; no per-chapter clips)'}`, '',
       '| Chapter | Step | Result | What was seen |', '|---|---|---|---|',
       ...steps.map((s) => `| ${cell(s.chapter)} | ${s.step}. ${cell(s.label)} | ${s.status} | ${cell(s.seen)} |`), '',
       '## Chapters in the combined video', '',
@@ -702,15 +813,15 @@ export async function createRecorder(opts = {}) {
       '## Frame quality', '', ...frameQualityMd(fq), '',
       '## Files', '',
       '- player.html: open it in a browser; plays every clip in order, click a chapter to jump.',
-      '- clips/: one webm per chapter and per card.',
+      mode === 'clips' ? '- clips/: one webm per chapter and per card.' : '- clips/: one webm per segment (chapters share it); player.html seeks to each chapter.',
       '- shots/: one screenshot per step, caption visible.',
-      `- full.mp4: ${ffmpeg.available && ffmpeg.note.startsWith('full') ? 'written.' : 'not written. ' + ffmpeg.note}`,
+      `- full.mp4: ${fullWritten ? 'written.' : 'not written. ' + ffmpeg.note}`,
       ...(notes.length ? ['', '## Notes', '', ...notes.map((x) => `- ${x}`)] : []), '',
     ].join('\n');
     fs.writeFileSync(path.join(runDir, 'report.md'), md);
-    fs.writeFileSync(path.join(runDir, 'player.html'), playerHtml(o.title, timeline));
+    fs.writeFileSync(path.join(runDir, 'player.html'), playerHtml(o.title, timeline, mode === 'segments'));
 
-    return { runDir, clipsDir, shotsDir, report: path.join(runDir, 'report.md'), results: path.join(runDir, 'results.json'), player: path.join(runDir, 'player.html'), fullMp4: ffmpeg.available && ffmpeg.note.startsWith('full') ? path.join(runDir, 'full.mp4') : null, ffmpeg, summary, clips: timeline };
+    return { runDir, clipsDir, shotsDir, report: path.join(runDir, 'report.md'), results: path.join(runDir, 'results.json'), player: path.join(runDir, 'player.html'), fullMp4: fullWritten ? path.join(runDir, 'full.mp4') : null, ffmpeg, summary, clips: timeline };
   }
 
   return api;
@@ -733,7 +844,30 @@ function frameQualityMd(fq) {
   return out;
 }
 
-function playerHtml(title, timeline) {
+// Find ffmpeg: DEMO_FFMPEG (the value "none" disables it), then PATH, then the voice-over's imageio-ffmpeg.
+// Detected only, never installed. Returns a command or path, or null.
+function findFfmpeg() {
+  const works = (cmd) => { try { return spawnSync(cmd, ['-version'], { encoding: 'utf8' }).status === 0; } catch { return false; } };
+  const env = (process.env.DEMO_FFMPEG || '').trim();
+  if (env) {
+    if (env.toLowerCase() === 'none') return null;
+    if (works(env)) return env;
+  }
+  if (works('ffmpeg')) return 'ffmpeg';
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const venv = path.join(here, '..', '..', 'demo-voiceover', '.venv');
+    const py = [path.join(venv, 'Scripts', 'python.exe'), path.join(venv, 'bin', 'python')].find((p) => fs.existsSync(p));
+    if (py) {
+      const r = spawnSync(py, ['-c', 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())'], { encoding: 'utf8' });
+      const exe = (r.stdout || '').trim().split(/\r?\n/).pop();
+      if (r.status === 0 && exe && works(exe)) return exe;
+    }
+  } catch { /* no voice-over environment */ }
+  return null;
+}
+
+function playerHtml(title, timeline, seekMode) {
   const data = JSON.stringify(timeline).replace(/</g, '&lt;');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -752,12 +886,25 @@ function playerHtml(title, timeline) {
 <main><video id="v" controls autoplay muted></video><p id="now"></p></main>
 <script>
 const clips = ${data};
+const seek = ${seekMode ? 'true' : 'false'};
 const v = document.getElementById('v'), list = document.getElementById('list'), now = document.getElementById('now');
 let i = 0;
-function play(k){ i = k; v.src = clips[k].file; v.play().catch(function(){}); now.textContent = (k+1) + ' / ' + clips.length + ': ' + clips[k].title;
-  Array.prototype.forEach.call(list.children, function(b, j){ b.className = j === k ? 'on' : ''; }); }
+function play(k){
+  i = k;
+  const c = clips[k];
+  const go = function(){ if (seek) v.currentTime = c.segStart; v.play().catch(function(){}); };
+  if (seek && v.getAttribute('data-src') === c.file && v.readyState >= 1) { go(); }
+  else {
+    v.setAttribute('data-src', c.file);
+    v.src = c.file;
+    if (seek) v.addEventListener('loadedmetadata', go, { once: true }); else v.play().catch(function(){});
+  }
+  now.textContent = (k+1) + ' / ' + clips.length + ': ' + c.title;
+  Array.prototype.forEach.call(list.children, function(b, j){ b.className = j === k ? 'on' : ''; });
+}
 clips.forEach(function(c, k){ const b = document.createElement('button'); b.innerHTML = c.startText + ' ' + c.title.replace(/</g,'&lt;') + ' <small>(' + c.kind + ')</small>'; b.onclick = function(){ play(k); }; list.appendChild(b); });
 v.addEventListener('ended', function(){ if (i + 1 < clips.length) play(i + 1); });
+if (seek) v.addEventListener('timeupdate', function(){ const c = clips[i]; if (c && v.currentTime >= c.segEnd - 0.05 && i + 1 < clips.length) play(i + 1); });
 play(0);
 </script></body></html>
 `;

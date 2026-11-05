@@ -62,7 +62,8 @@ Each run has its own timestamped folder under `demo-runs/`. Earlier runs are nev
 
 ## Limits
 
-- Without ffmpeg you get webm clips and the player page, not one mp4.
+- Chapters share one browser page, so unsaved input survives a chapter boundary. `{ fresh: true }` starts a new, signed-out context.
+- Without ffmpeg you get one webm per segment (chapters share it) and a player page that seeks to each chapter, not one mp4. ffmpeg is found from DEMO_FFMPEG, PATH, or the voice-over environment.
 - No audio in this skill. Captions carry the story. For a spoken voice-over use `/demo-voiceover` afterwards.
 - Web apps in Chromium only.
 

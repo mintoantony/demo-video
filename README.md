@@ -87,7 +87,7 @@ Each run has its own timestamped folder under `demo-runs/`. Earlier runs are nev
 
 ## Limits
 
-- Without ffmpeg you get webm clips and the player page, no single mp4.
+- Chapters share one page; `fresh: true` starts signed out. Without ffmpeg you get one webm per segment and a player that seeks to each chapter, no single mp4.
 - `/demo-video` records no audio. Use `/demo-voiceover` for speech.
 - Voice-over: English voices only by default. Speech length is estimated at 2.5 words/s, then measured.
 - Chromium only.

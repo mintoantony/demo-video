@@ -10,7 +10,7 @@ regenerate narration.md. Keep the line structure (ids, clip, atSec, budgetSec).
 """
 import argparse, json, sys
 from pathlib import Path
-from common import est_seconds, load_json, voice_dir, LEAD_OFFSET, STEP_OFFSET
+from common import est_seconds, load_json, load_results, voice_dir, LEAD_OFFSET, STEP_OFFSET
 
 DEFAULT_VOICE = "en_GB-cori-medium"
 
@@ -42,7 +42,7 @@ def step_text(s):
 
 
 def build(run, voice, engine):
-    res = load_json(Path(run) / "results.json")
+    res = load_results(run)
     title = res["title"]
     summ = res.get("summary", {})
     clips = res["clips"]
@@ -129,7 +129,7 @@ def main():
     vd = voice_dir(run)
     vd.mkdir(exist_ok=True)
     nj = vd / "narration.json"
-    res = load_json(run / "results.json")
+    res = load_results(run)
     if a.render:
         if not nj.exists():
             sys.exit("No narration.json to render. Run without --render first.")

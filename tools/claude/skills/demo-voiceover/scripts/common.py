@@ -64,3 +64,41 @@ def srt_time(t):
     m, ms = divmod(ms, 60000)
     s, ms = divmod(ms, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def load_results(run):
+    """Read results.json. A run recorded without ffmpeg shares one webm per segment, so cut one
+    clip per chapter and card into <run>/voiceover/clips/ and point the timeline at those files.
+    The original run files are only read."""
+    run = Path(run)
+    res = load_json(run / "results.json")
+    if res.get("mode") != "segments":
+        return res
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        raise SystemExit("This run has no per-chapter clips (recorded without ffmpeg) and no ffmpeg is available to cut them.")
+    out = run / "voiceover" / "clips"
+    out.mkdir(parents=True, exist_ok=True)
+    remap = {}
+    for c in res["clips"]:
+        slug = re.sub(r"[^a-z0-9]+", "-", str(c["title"]).lower()).strip("-")[:40] or "clip"
+        rel = f"voiceover/clips/{int(c['n']):02d}-{slug}.webm"
+        dst = run / rel
+        if not dst.exists():
+            r = subprocess.run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(run / c["file"]),
+                                "-ss", str(c["segStart"]), "-to", str(c["segEnd"]), "-c:v", "libvpx",
+                                "-deadline", "realtime", "-cpu-used", "8", "-b:v", "2M", "-an", str(dst)],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SystemExit(f"Could not cut {rel}: {r.stderr[-300:]}")
+        remap.setdefault(c["file"], {})[c["n"]] = rel
+        c["file"] = rel
+    # chapters and steps still name the shared segment file; their chapter's own clip is found by index
+    by_title = {c["title"]: c["file"] for c in res["clips"] if c.get("kind") == "chapter"}
+    for ch in res.get("chapters", []):
+        if ch["title"] in by_title:
+            ch["clip"] = by_title[ch["title"]]
+    for s in res.get("steps", []):
+        if s.get("chapter") in by_title:
+            s["clip"] = by_title[s["chapter"]]
+    return res

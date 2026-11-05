@@ -69,7 +69,7 @@ The carry-over uses Playwright storage state (cookies and local storage). It doe
 
 ## Chapters
 
-- One chapter, one clip. People want to share one chapter, so each chapter should make sense alone. Start it with `url` so it opens on the right page.
+- All chapters share one page; `fresh: true` starts signed out. One chapter, one clip (cut by ffmpeg when available). People want to share one chapter, so each chapter should make sense alone. Start it with `url` so it opens on the right page.
 - 3 to 8 steps per chapter. A long chapter is hard to watch.
 - Name chapters after what the viewer learns: "Create a request", not "Chapter 2".
 
