@@ -58,6 +58,24 @@ export async function runFixtureWalkthrough({ baseUrl, outRoot, fast = true, mod
         });
     });
 
+    // Regression: chapters share one page. A chapter without a url must find the page as it was left.
+    let draftLoad = null;
+    await rec.chapter('Start a draft', { actor: 'Ada Fixture (Manager)', url: '/form.html' }, async ({ page, step, type }) => {
+      await step('Type a draft plant name without saving', 'Plant name filled in, nothing saved',
+        async () => { await type('#plant', 'Draft basil'); draftLoad = await page.evaluate(() => window.__loadId); },
+        async () => ({ ok: draftLoad != null, seen: 'draft typed, not saved' }));
+    });
+
+    await rec.chapter('Continue the draft', { actor: 'Ada Fixture (Manager)' }, async ({ page, step }) => {
+      await step('Check the draft survived the chapter boundary', 'The field still holds "Draft basil" on the same page load', null,
+        async () => {
+          const v = await page.locator('#plant').inputValue();
+          const id = await page.evaluate(() => window.__loadId);
+          const ok = v === 'Draft basil' && id === draftLoad;
+          return { ok, seen: ok ? 'draft kept: same page load, field value kept' : `draft lost: value "${v}", same load ${id === draftLoad}` };
+        });
+    });
+
     await rec.chapter('Look at the list as another person', { actor: 'Ben Sample (Staff)', fresh: true, url: '/index.html' }, async ({ page, step, click }) => {
       await step('Choose Ben Sample', 'The dashboard opens and says "Signed in as Ben Sample"',
         () => click('#p-ben'),

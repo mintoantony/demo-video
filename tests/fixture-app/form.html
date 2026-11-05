@@ -4,6 +4,7 @@
 <label>Note<input id="note"></label>
 <button id="submit" disabled>Submit</button> <p id="saved"></p></main>
 <script>
+window.__loadId=Math.random();
 var p=document.getElementById('plant'),n=document.getElementById('note'),b=document.getElementById('submit');
 function upd(){b.disabled=!(p.value.trim()&&n.value.trim());}
 p.oninput=upd;n.oninput=upd;

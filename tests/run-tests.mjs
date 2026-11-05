@@ -77,11 +77,14 @@ try {
   const clipFiles = fs.readdirSync(path.join(r1.runDir, 'clips')).filter((f) => f.endsWith('.webm'));
   const sizes = clipFiles.map((f) => `${f} ${(fs.statSync(path.join(r1.runDir, 'clips', f)).size / 1024).toFixed(0)} KB`);
   console.log('Clips:\n  ' + sizes.join('\n  '));
-  check('clip count = chapters + 2 cards', clipFiles.length === results.chapters.length + 2, `${clipFiles.length} clips, ${results.chapters.length} chapters`);
+  const clipsMode = results.mode === 'clips';
+  console.log('Mode: ' + results.mode + ', ffmpeg: ' + (results.ffmpeg.path || 'none'));
+  check('timeline entries = chapters + 2 cards', results.clips.length === results.chapters.length + 2, `${results.clips.length} entries, ${results.chapters.length} chapters`);
+  check(clipsMode ? 'clips mode: one webm per chapter and card' : 'segments mode: one webm per segment', clipsMode ? clipFiles.length === results.clips.length : clipFiles.length === new Set(results.clips.map((c) => c.segment)).size && clipFiles.every((f) => f.startsWith('segment-')), `${clipFiles.length} files`);
   check('every clip is larger than 20 KB', clipFiles.every((f) => fs.statSync(path.join(r1.runDir, 'clips', f)).size > 20 * 1024));
 
   const ch = JSON.parse(fs.readFileSync(path.join(r1.runDir, 'chapters.json'), 'utf8'));
-  check('chapters.json start times increase', ch.length === clipFiles.length && ch.every((c, i) => i === 0 ? c.start === 0 : c.start > ch[i - 1].start));
+  check('chapters.json start times increase', ch.length === results.clips.length && ch.every((c, i) => i === 0 ? c.start === 0 : c.start > ch[i - 1].start));
   check('chapters.txt exists', fs.existsSync(path.join(r1.runDir, 'chapters.txt')));
 
   const report = fs.readFileSync(path.join(r1.runDir, 'report.md'), 'utf8');
@@ -97,13 +100,18 @@ try {
   check('caption text carries the result line', results.steps.every((s) => s.captionText.includes('RESULT')));
 
   const player = fs.readFileSync(path.join(r1.runDir, 'player.html'), 'utf8');
-  check('player.html references every clip', clipFiles.every((f) => player.includes(`clips/${f}`)));
+  check('player.html references every clip', ch.every((c) => player.includes(c.file)) && clipFiles.every((f) => player.includes(`clips/${f}`)));
 
   const hasMp4 = fs.existsSync(path.join(r1.runDir, 'full.mp4'));
-  check('ffmpeg absence is reported, not an error', hasMp4 || (results.ffmpeg.available === false && report.includes('ffmpeg was not found')), hasMp4 ? 'ffmpeg present, full.mp4 written' : 'no ffmpeg, noted in report');
+  check('report.md names the mode', report.includes('Mode: ' + (clipsMode ? 'clips' : 'segments')));
+  if (clipsMode) check('clips mode writes full.mp4', hasMp4 && fs.statSync(path.join(r1.runDir, 'full.mp4')).size > 20 * 1024);
+  else check('ffmpeg absence is reported, not an error', !hasMp4 && results.ffmpeg.available === false && report.includes('ffmpeg was not found'), 'no ffmpeg, noted in report');
+  check('chapters.json has segment, segStart and segEnd', ch.every((c) => c.segment >= 1 && c.segEnd > c.segStart));
+  const draft = results.steps.find((x) => x.label === 'Check the draft survived the chapter boundary');
+  check('regression: unsaved input and page load survive a chapter boundary', !!draft && draft.status === 'PASS' && String(draft.seen).includes('draft kept'), draft && draft.seen);
 
   const fq = results.frameQuality || {};
-  check('frame monitor ran and wrote data to results.json', fq.enabled === true && fq.clipsChecked === clipFiles.length, `${fq.samples} samples`);
+  check('frame monitor ran and wrote data to results.json', fq.enabled === true && fq.clipsChecked === results.clips.length, `${fq.samples} samples`);
   check('zero blank frames', fq.blankFrameRuns === 0, `runs: ${fq.blankFrameRuns}`);
   check('zero unjustified static holds', fq.unjustifiedStaticRuns === 0, `runs: ${fq.unjustifiedStaticRuns}`);
   const slow = results.steps.find((x) => x.label === 'Open the Slow report');
