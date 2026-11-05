@@ -229,7 +229,7 @@ function storyboardMd(o, plan, env, estimate) {
   ];
   plan.chapters.forEach((c, i) => {
     L.push(`## Chapter ${i + 1}: ${c.title}`, '',
-      `- Acting as: ${c.actor || '(nobody in particular)'}`,
+      ...(c.actor ? [`- Acting as: ${c.actor}`] : []),
       `- Starts at: ${c.url || '(current page)'}${c.fresh ? ' (signed out first)' : ''}`,
       `- Estimated length: about ${estimate(c.steps)} s`, '',
       '| # | Action | Caption | You should see | Flag |', '|---|---|---|---|---|');

@@ -25,7 +25,7 @@ Built 2026-11-05 by Minto Antony.
 
 ## How it works
 
-1. **Brief.** You give the URL, what to show, who acts, the environment and the reset command.
+1. **Brief.** You give the URL, what to show, the environment and the reset command. If the app has sign-in and the walkthrough switches between users, also say which user each part is signed in as. Apps without sign-in need none of this.
 2. **Plan.** The agent explores read-only and writes a script. Plan mode opens no browser. It writes `storyboard.md` with chapters, steps, "you should see", flags for steps that change data, time estimates and open questions.
 3. **Approve.** You read the storyboard and say yes. Then `approve.mjs` stores the sha256 of the script. Record mode refuses without it, and refuses again if the script changes.
 4. **Record.** Each chapter gets its own clip. It opens on an intro card while the first page loads. A frame monitor checks for blank frames and long identical frames, and writes "Frame quality" into `report.md` and `results.json`.

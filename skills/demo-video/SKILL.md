@@ -13,7 +13,7 @@ Ask for what is missing, in one short message:
 
 1. The URL where the app runs (prefer 127.0.0.1 over localhost).
 2. What to show: a checklist, a user story, or a plain list of steps.
-3. Who acts: the people or roles (chapters can change the person).
+3. Only if the app has sign-in: which user or role each chapter is signed in as, and how to sign in. Skip this for apps without sign-in; chapters then have no `actor` and no "Acting as" line is shown.
 4. The environment: local, shared test, or production. Production needs a clear yes.
 5. How to put the data back after a step that changes it (the reset command), and how many times it may run.
 6. Which steps may be irreversible, if any. The default is none.
