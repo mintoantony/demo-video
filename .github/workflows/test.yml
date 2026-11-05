@@ -44,6 +44,8 @@ jobs:
         run: node make_tool_copies.mjs --check
       - name: Fixture tests
         run: node tests/run-tests.mjs
+      - name: Voice-over setup (repo copy)
+        run: python skills/demo-voiceover/setup_voice.py
       - name: Voice-over tests
         run: python tests/test_voiceover.py
       - name: Upload test log on failure
