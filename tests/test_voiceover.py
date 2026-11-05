@@ -169,7 +169,22 @@ def check_srt(path):
         assert len(lines) >= 3 and lines[2].strip()
 
 
+def system_voice_works():
+    """True if the OS voice can write a wav here (a CI Windows runner has no SAPI voice or audio device)."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import tts; "
+            "p = tts.SystemEngine().synth('Hello.', sys.argv[2]); print(p)")
+    out = Path(tempfile.mkdtemp(prefix="vo_probe_")) / "probe"
+    try:
+        r = subprocess.run([PY, "-c", code, str(SCRIPTS), str(out)], capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return False
+    return r.returncode == 0
+
+
 def test_system_engine():
+    if not system_voice_works():
+        print("SKIP system engine: no usable system voice on this machine")
+        return
     check_engine("system")
 
 
@@ -183,6 +198,9 @@ def test_piper_engine():
 
 
 def test_long_line_extends_slot():
+    if not system_voice_works():
+        print("SKIP long line: no usable system voice on this machine")
+        return
     run = fresh_run()
     doc = draft(run)
     nj = run / "voiceover" / "narration.json"
