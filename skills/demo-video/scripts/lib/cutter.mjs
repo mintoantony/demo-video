@@ -2,11 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { firstLine } from './util.mjs';
 import { segFile } from './segments.mjs';
 
-// Find ffmpeg: DEMO_FFMPEG (the value "none" disables it), then PATH, then the voice-over's imageio-ffmpeg.
+// Find ffmpeg: DEMO_FFMPEG (the value "none" disables it), then PATH, then the npm package ffmpeg-static,
+// then the voice-over's imageio-ffmpeg.
 // Detected only, never installed. Returns a command or path, or null.
 export function findFfmpeg() {
   const works = (cmd) => { try { return spawnSync(cmd, ['-version'], { encoding: 'utf8' }).status === 0; } catch { return false; } };
@@ -16,6 +18,10 @@ export function findFfmpeg() {
     if (works(env)) return env;
   }
   if (works('ffmpeg')) return 'ffmpeg';
+  try {   // the binary shipped by the npm dependency ffmpeg-static
+    const exe = createRequire(import.meta.url)('ffmpeg-static');
+    if (exe && fs.existsSync(exe) && works(exe)) return exe;
+  } catch { /* package not installed */ }
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const venv = path.join(here, '..', '..', '..', 'demo-voiceover', '.venv');
@@ -29,11 +35,15 @@ export function findFfmpeg() {
   return null;
 }
 
+export const SEGMENTS_WARNING = 'segments mode: no per-chapter clips, no full.mp4';
+export const NO_FFMPEG_NOTE = 'ffmpeg was not found on PATH (or is disabled with DEMO_FFMPEG=none). ' + SEGMENTS_WARNING + ' Chapters share segment videos; player.html seeks to each chapter. ' + 'To fix: run npm install in the demo-video folder (installs a private ffmpeg), or install ffmpeg on PATH, or set DEMO_FFMPEG to the full path of an ffmpeg executable.';
+
 // Returns { mode: 'clips' | 'segments', ffmpeg: {...} }.
 export function cutClips(S) {
   const { ff, clips, runDir } = S;
   let mode = 'segments';
-  let ffmpeg = { available: false, mode, note: 'ffmpeg was not found on PATH (or is disabled with DEMO_FFMPEG=none), so there is no single full.mp4 and no per-chapter clips. Chapters share segment videos; player.html seeks to each chapter.' };
+  let ffmpeg = { available: false, mode, note: NO_FFMPEG_NOTE };
+  if (!ff) S.log('WARNING ' + SEGMENTS_WARNING + '. ' + ffmpeg.note.split('. ').slice(-1)[0]);
   if (!(ff && clips.length)) return { mode, ffmpeg };
   let cutFailed = '';
   for (const c of clips) {

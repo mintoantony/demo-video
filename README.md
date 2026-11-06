@@ -81,6 +81,17 @@ Licences: imageio-ffmpeg BSD-2-Clause. The ffmpeg binary it ships is a static GP
 
 No MCP server: plain scripts called by the skill are enough. Nothing needs to stay running between calls.
 
+## ffmpeg
+
+demo-video cuts one clip per chapter and joins them into `full.mp4` with ffmpeg. It finds ffmpeg in this order: `DEMO_FFMPEG` (full path; `none` disables it), then `ffmpeg` on PATH, then the private copy that `npm install` fetches (`ffmpeg-static`), then the voice-over venv. Nothing extra is needed beyond `npm install`, which both installers already run.
+
+With no ffmpeg the run falls back to segments mode and warns in the console and in `report.md`: "segments mode: no per-chapter clips, no full.mp4".
+
+Licences: the npm package `ffmpeg-static` is GPL-3.0-or-later. The binary it downloads (ffmpeg 6.1.1 essentials build, gyan.dev, Windows) is configured with `--enable-gpl --enable-version3`, so it is GPL-3.0-or-later. It runs as a separate executable and nothing is linked into this repo. Checked on that build: encoders libx264, libvpx, libvpx-vp9; decoders vp8, vp9.
+
+## Module layout
+
+`skills/demo-video/scripts/recorder.mjs` is the public entry point. The work lives in `scripts/lib/`: approval, cards, chapter, cutter (ffmpeg), monitor, overlay, planner, player, report, segments, step, util, version.
 ## Outputs
 
 Each run has its own timestamped folder under `demo-runs/`. Earlier runs are never deleted. It holds `clips/*.webm`, `player.html`, `report.md`, `results.json`, `chapters.json`, `chapters.txt`, `screenshots/`, and `full.mp4` if ffmpeg is installed.

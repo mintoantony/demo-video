@@ -122,6 +122,17 @@ try {
   const r2 = await runFixtureWalkthrough(recArgs);
   check('a second run creates a second folder', r2.runDir !== r1.runDir && fs.existsSync(r2.runDir));
   check('the first run is intact after the second', fs.existsSync(path.join(r1.runDir, 'results.json')) && fs.readdirSync(path.join(r1.runDir, 'clips')).length === clipFiles.length);
+
+  // Segments mode: ffmpeg disabled with DEMO_FFMPEG=none must warn in report.md and write no full.mp4.
+  process.env.DEMO_FFMPEG = 'none';
+  let r3;
+  try { r3 = await runFixtureWalkthrough(recArgs); } finally { delete process.env.DEMO_FFMPEG; }
+  const res3 = JSON.parse(fs.readFileSync(path.join(r3.runDir, 'results.json'), 'utf8'));
+  const rep3 = fs.readFileSync(path.join(r3.runDir, 'report.md'), 'utf8');
+  check('DEMO_FFMPEG=none gives segments mode', res3.mode === 'segments' && res3.ffmpeg.available === false);
+  check('DEMO_FFMPEG=none writes no full.mp4', !fs.existsSync(path.join(r3.runDir, 'full.mp4')));
+  check('report.md warns "segments mode: no per-chapter clips, no full.mp4" and says how to fix it',
+    rep3.includes('ffmpeg was not found') && rep3.includes('segments mode: no per-chapter clips, no full.mp4') && rep3.includes('npm install'));
 } catch (e) {
   console.log('FAIL  test run crashed: ' + e.stack);
   failed += 1;
