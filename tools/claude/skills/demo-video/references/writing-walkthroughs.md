@@ -26,6 +26,31 @@ Every step ends in one of three results. The caption shows the result, so it mus
 4. Never record against shared or production systems unless the person said so in plain words. Prefer a local copy with invented data.
 5. Dry-run the read-only chapters with the real script. Record once when they are stable.
 
+### Preconditions are prechecks in the script
+
+A starting state written only in prose ("the form is still open and unsubmitted") is not checked, so a recording can silently start from the wrong state. Write it as a precheck. It runs before the title card, in a separate window that is not recorded.
+
+```js
+await rec.precheck('The form is still open and unsubmitted', async ({ page, goto }) => {
+  await goto('/app/request.html');
+  const n = await page.evaluate(() => fetch('/api/request/count').then((r) => r.json()).then((j) => j.count));
+  return { ok: n === 0, seen: `${n} requests already saved` };   // say what is there, not what you hope
+});
+```
+
+- If any precheck fails, recording is refused before anything is recorded. The message gives what was seen and suggests the reset command. A refusal leaves no run folder behind, so earlier runs stay as they were.
+- A precheck that throws counts as failed ("could not check").
+- Plan mode does not run prechecks. It lists them in `storyboard.md` under "Before recording".
+- Results go into `results.json` and the "Before recording" table of `report.md`.
+
+### App profile (app.json)
+
+Keep what you learn about the app in an `app.json` next to the walkthrough (or pass `createRecorder({ profile: 'path/to/app.json' })`). The engine reads it: `name`, `baseUrl`, `environment` (local, shared, production), `signIn` (a description and an optional recipe of kind `card` or `form`), `signOut`, `reset` (`command`, `cwd`, `limit`) and `notes`. With a recipe, `rec.signIn(page, name)` and `rec.signOut(page)` do the work. See `app.example.json`. Production in record mode needs `DEMO_ALLOW_PRODUCTION=1`, and the storyboard then shows a red warning. Passwords are never stored in it: use `{env:VAR}`.
+
+### Plan estimates
+
+The storyboard estimate uses the engine's hold times plus about 1 s per action and 0.3 s of settling. It cannot see a slow page or long typing. Give such a step `{ estSec: 7 }` (the seconds the action itself takes).
+
 ## Selectors
 
 Pick the most stable thing, in this order.

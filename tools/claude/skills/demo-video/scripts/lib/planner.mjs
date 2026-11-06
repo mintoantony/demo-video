@@ -9,31 +9,40 @@ export function createPlanner(o, readMs) {
   const sp = o.scriptPath ? resolveScript(o.scriptPath) : null;
   const planDir = path.resolve(o.planDir || (sp ? path.dirname(sp) : '.'));
   const env = o.environment || 'unknown';
-  const plan = { chapters: [], title: o.title };
+  const plan = { chapters: [], title: o.title, prechecks: [] };
   // A stand-in for the browser page: any call or property works and does nothing.
   const ghost = () => new Proxy(function () {}, {
     get: (_t, k) => (k === 'then' ? undefined : ghost()),
     apply: () => ghost(),
   });
+  // Same hold-time rule as the engine (readMs), plus the chapter intro, a default action time
+  // (about 1 s: a click or a goto; a typed field is similar) and the 0.3 s settle. A step's
+  // { estSec } replaces the action time, for slow pages or long typing.
+  const ACTION_SEC = 1.0, SETTLE_SEC = 0.3;
   const estimate = (steps) => {
     let sec = o.introMs / 1000;
     for (const s of steps) {
-      sec += readMs(`${s.label} ${s.expect}`) / 1000 + 1.5 + Math.max(o.stepPause, readMs('RESULT: as expected - ' + s.expect)) / 1000;
+      const action = Number.isFinite(s.estSec) ? s.estSec : ACTION_SEC;
+      sec += readMs(`${s.label} ${s.expect}`) / 1000 + action + SETTLE_SEC
+        + Math.max(o.stepPause, readMs('RESULT: as expected - ' + s.expect)) / 1000;
     }
-    return Math.round(sec);
+    return sec;
   };
   const api = {
     mode: 'plan',
     async titleCard() { plan.hasTitle = true; },
     async closingCard() { plan.hasClosing = true; },
     async click() {}, async type() {},
+    // Prechecks run only when recording. The plan lists their names so you can see what will be verified first.
+    async precheck(name) { plan.prechecks.push(name); return { name, ok: true, seen: '(not run in plan mode)' }; },
+    async signIn() {}, async signOut() {},
     async chapter(title, optsOrFn, maybeFn) {
       const copts = typeof optsOrFn === 'function' ? {} : (optsOrFn || {});
       const fn = typeof optsOrFn === 'function' ? optsOrFn : maybeFn;
       const ch = { title, actor: copts.actor || '', url: copts.url || '', fresh: !!copts.fresh, steps: [] };
       plan.chapters.push(ch);
       const step = async (label, expect, _action, _check, sopts = {}) => {
-        ch.steps.push({ label, expect: expect || '', changesData: !!sopts.changesData, irreversible: !!sopts.irreversible });
+        ch.steps.push({ label, expect: expect || '', changesData: !!sopts.changesData, irreversible: !!sopts.irreversible, estSec: Number.isFinite(sopts.estSec) ? sopts.estSec : undefined });
       };
       await fn({ page: ghost(), step, rec: api, click: async () => {}, type: async () => {}, goto: async () => {}, settle: async () => {} });
     },
@@ -62,10 +71,14 @@ function storyboardMd(o, plan, env, estimate) {
     '## Where and how', '',
     `- Target URL: ${o.baseUrl || '(not set)'}`,
     `- Environment: ${env}${env === 'local' ? '' : '  (not local: needs your explicit OK)'}`,
+    ...(env === 'production' ? ['- **WARNING (red): this is a PRODUCTION environment. Recording also needs DEMO_ALLOW_PRODUCTION=1. Real data can be touched. Do not approve unless you mean it.**'] : []),
+    ...(o.profileFile ? [`- App profile: ${o.profileFile}`] : []),
     `- Reset command: ${o.resetCommand || 'none given'}`,
     `- Engine: ${ENGINE_VERSION}`,
     `- Chapters: ${plan.chapters.length}, steps: ${plan.chapters.reduce((a, c) => a + c.steps.length, 0)}`,
     `- Estimated length: about ${mmss(total)} (${Math.round(total)} s)`, '',
+    '## Before recording', '',
+    ...(plan.prechecks.length ? ['These are checked first, in a separate window that is not recorded. If one fails, nothing is recorded.', '', ...plan.prechecks.map((p) => `- ${p}`)] : ['No prechecks in this script. The starting state is not verified.']), '',
     '## Steps that change data', '',
     ...(risky.length ? risky.map((r) => `- ${r.c} / ${r.s.label}: ${mark(r.s)}`) : ['None marked.']), '',
   ];
@@ -73,7 +86,7 @@ function storyboardMd(o, plan, env, estimate) {
     L.push(`## Chapter ${i + 1}: ${c.title}`, '',
       ...(c.actor ? [`- Acting as: ${c.actor}`] : []),
       `- Starts at: ${c.url || '(current page)'}${c.fresh ? ' (signed out first)' : ''}`,
-      `- Estimated length: about ${estimate(c.steps)} s`, '',
+      `- Estimated length: about ${Math.round(estimate(c.steps))} s`, '',
       '| # | Action | Caption | You should see | Flag |', '|---|---|---|---|---|');
     c.steps.forEach((s, j) => {
       const cell = (t) => String(t).replace(/\|/g, '/').replace(/\n/g, ' ');

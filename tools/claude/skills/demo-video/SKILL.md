@@ -1,6 +1,6 @@
 ---
 name: demo-video
-description: Records a captioned walkthrough or demo video of a web app, with a storyboard the user approves first. Use when the user types /demo-video, or asks for a demo video, walkthrough video, screen recording, tutorial clip, "show how it works", or a video proof that a feature or checklist works. Plans first (no browser), waits for a yes, then records one clip per chapter with captions, a report and a player page.
+description: Records a captioned video of a web app from an approved storyboard. Use for /demo-video, a demo video, walkthrough video, screen recording of a web app, product tour, training or how-to video, "show how it works", recording a test checklist or acceptance tests, or "record the app doing X". Triggers even when the user does not say "video". Plans first (no browser), waits for a yes, then records clips with captions, a report and a player page.
 ---
 
 # demo-video
@@ -17,6 +17,14 @@ Ask for what is missing, in one short message:
 4. The environment: local, shared test, or production. Production needs a clear yes.
 5. How to put the data back after a step that changes it (the reset command), and how many times it may run.
 6. Which steps may be irreversible, if any. The default is none.
+
+## App profile (app.json)
+
+Before asking the questions above, look for an `app.json` next to the walkthrough (or in the folder the user names). If there is one, use its URL, environment, sign-in and reset command and ask only what is missing. After the first successful run, save or update `app.json` next to the walkthrough with what you learned. The format is in `app.example.json`; never put a password in it (use `{env:VAR}`). The storyboard shows its environment and reset command. If `environment` is `production`, the storyboard shows a red warning and recording needs `DEMO_ALLOW_PRODUCTION=1` as well as the user's yes.
+
+## Preconditions
+
+Write each starting condition as `rec.precheck(name, async ({ page, goto }) => ({ ok, seen }))` in the script. Prechecks run before the title card, unrecorded. If one fails, recording is refused, nothing is recorded and no run folder is left; tell the user what was seen and offer the reset command. The storyboard lists them under "Before recording" and `report.md` shows the results.
 
 ## Safety first
 
@@ -72,4 +80,5 @@ Each run has its own timestamped folder under `demo-runs/`. Earlier runs are nev
 - `scripts/recorder.mjs` is the engine. Do not edit it for one app.
 - `scripts/walkthrough.template.mjs` is the script to copy and fill in.
 - `scripts/approve.mjs` records the approval.
+- `app.example.json` is a sample app profile to copy next to a walkthrough.
 - `references/writing-walkthroughs.md` has the rules for good scripts and fixes for common problems.

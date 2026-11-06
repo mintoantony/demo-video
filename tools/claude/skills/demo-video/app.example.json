@@ -1,0 +1,19 @@
+{
+  "name": "Example Portal",
+  "baseUrl": "http://127.0.0.1:3000",
+  "environment": "local",
+  "signIn": {
+    "description": "Open the app; it redirects to the sign-in page. Choose a person card, or fill in the form.",
+    "kind": "card",
+    "url": "/signin",
+    "selector": "#in-{name}",
+    "signedIn": "nav"
+  },
+  "signOut": {
+    "description": "Press Sign out in the header.",
+    "selector": "#signout",
+    "signedOut": "#msg"
+  },
+  "reset": { "command": "npm run seed", "cwd": ".", "limit": 2 },
+  "notes": "environment is local, shared or production. production needs DEMO_ALLOW_PRODUCTION=1 to record. For a form sign-in use kind \"form\" with \"fields\": {\"#user\": \"{name}\", \"#pass\": \"{env:DEMO_PASSWORD}\"} and \"submit\": \"#login\"."
+}
