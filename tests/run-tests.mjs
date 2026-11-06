@@ -35,6 +35,12 @@ try {
   check('storyboard flags the data-changing step', /Press Submit.*(changes data|DATA)/i.test(sb), 'row for Press Submit');
   check('storyboard has environment, reset command, estimate and open questions', /local/i.test(sb) && sb.includes('none needed') && /estimated/i.test(sb) && sb.includes('Open questions'));
   check('plan mode records nothing', !fs.existsSync(outRoot) || fs.readdirSync(outRoot).length === runsBefore);
+  check('storyboard has a "Before recording" section listing the precheck', sb.includes('## Before recording') && sb.includes('The sign-in page offers the two fixture people'));
+  check('the app profile (tests/app.json) feeds the environment and the reset command into the storyboard', sb.includes('App profile:') && sb.includes('app.json') && /local/i.test(sb) && sb.includes('none needed: the fixture app keeps no server state'));
+  const planProd = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-plan-prod-'));
+  await runFixtureWalkthrough({ baseUrl, outRoot, mode: 'plan', planDir: planProd, environment: 'production' });
+  const sbProd = fs.readFileSync(path.join(planProd, 'storyboard.md'), 'utf8');
+  check('a production environment shows a red warning in the storyboard', /production/i.test(sbProd) && sbProd.includes('DEMO_ALLOW_PRODUCTION=1'));
 
   let refused = '';
   try { await runFixtureWalkthrough({ baseUrl, outRoot, planDir }); } catch (e) { refused = e.message; }
@@ -75,6 +81,51 @@ try {
   check('DEMO_APPROVED_ENGINE with another minor refuses', /Re-plan and confirm/.test(rEnv), rEnv.slice(0, 70));
   setEngine(`${maj}.${min}.${pat + 1}+deadbeef`); // patch-only difference: warns, still records (checked in the DEMO_FFMPEG=none run below)
 
+  // ---- scripted preconditions and the production gate: all refuse before anything is recorded ----
+  const runCount = () => (fs.existsSync(outRoot) ? fs.readdirSync(outRoot).length : 0);
+  const savedBeforePre = state.submissions.length;
+  let preErr = '';
+  const runsBeforePre = runCount();
+  try {
+    await runFixtureWalkthrough({ ...recArgs, prechecks: (rec) => rec.precheck('The form is still open and unsubmitted', async () => ({ ok: false, seen: 'the form was already submitted (1 saved)' })) });
+  } catch (e) { preErr = e.message; }
+  check('a failing precheck refuses and says what it saw', /Precheck failed/.test(preErr) && preErr.includes('the form was already submitted') && preErr.includes('nothing was recorded'), preErr.slice(0, 90));
+  check('a failing precheck leaves no run folder and saves nothing', runCount() === runsBeforePre && state.submissions.length === savedBeforePre, `${runCount() - runsBeforePre} new folders`);
+  let preErr2 = '';
+  try {
+    await runFixtureWalkthrough({ ...recArgs, prechecks: (rec) => rec.precheck('A check that cannot run', async () => { throw new Error('the selector #nothing was not found'); }) });
+  } catch (e) { preErr2 = e.message; }
+  check('a precheck that throws counts as failed ("could not check")', /could not check/.test(preErr2) && runCount() === runsBeforePre, preErr2.slice(0, 90));
+
+  delete process.env.DEMO_ALLOW_PRODUCTION;
+  let prodErr = '';
+  try { await runFixtureWalkthrough({ ...recArgs, environment: 'production' }); } catch (e) { prodErr = e.message; }
+  check('environment production refuses without DEMO_ALLOW_PRODUCTION=1', /DEMO_ALLOW_PRODUCTION=1/.test(prodErr) && runCount() === runsBeforePre, prodErr.slice(0, 90));
+
+  // rec.signIn / rec.signOut from the profile, on a scratch page via the engine's own hooks
+  {
+    const { chromium } = await import('playwright');
+    const { signInWith, signOutWith } = await import('../skills/demo-video/scripts/lib/profile.mjs');
+    const prof = JSON.parse(fs.readFileSync(path.join(here, 'app.json'), 'utf8'));
+    const b = await chromium.launch();
+    try {
+      const pg = await (await b.newContext()).newPage();
+      await signInWith(prof, pg, 'ben', baseUrl);
+      const who = await pg.locator('#who').innerText();
+      check('profile signIn recipe (card) signs in', who.includes('Ben'), who);
+      await signOutWith(prof, pg, baseUrl);
+      const msg = await pg.locator('#msg').innerText();
+      check('profile signOut recipe signs out', /signed out/i.test(msg), msg);
+      let noRecipe = '';
+      try { await signInWith({}, pg, 'ada', baseUrl); } catch (e) { noRecipe = e.message; }
+      check('rec.signIn without a recipe gives a clear error', /signIn recipe/.test(noRecipe));
+    } finally { await b.close(); }
+  }
+  {
+    const ex = JSON.parse(fs.readFileSync(path.join(here, '..', 'skills', 'demo-video', 'app.example.json'), 'utf8'));
+    check('app.example.json has the documented fields', ['name', 'baseUrl', 'environment', 'signIn', 'signOut', 'reset', 'notes'].every((k) => k in ex) && ['local', 'shared', 'production'].includes(ex.environment));
+  }
+
   const before = fs.existsSync(outRoot) ? fs.readdirSync(outRoot).length : 0;
   const t0 = Date.now();
   const r1 = await runFixtureWalkthrough(recArgs);
@@ -104,6 +155,14 @@ try {
   check('report.md has PASS rows', rows.filter((l) => l.includes('| PASS |')).length >= 5);
   check('report.md has exactly one DIFFERENT row', rows.filter((l) => l.includes('| DIFFERENT |')).length === 1);
   check('the DIFFERENT row says what was seen', rows.some((l) => l.includes('| DIFFERENT |') && l.includes('4 requests listed')));
+  check('a passing precheck records, and the result is in results.json and report.md',
+    Array.isArray(results.prechecks) && results.prechecks.length === 1 && results.prechecks[0].ok === true
+    && report.includes('## Before recording') && report.includes('The sign-in page offers the two fixture people') && results.environment === 'local');
+  const estimated = plan.estimatedSeconds;
+  const actual = results.totalSeconds;
+  const off = Math.abs(estimated - actual) / actual;
+  console.log(`Estimate: plan said ${estimated} s, recording took ${actual} s (${(off * 100).toFixed(1)}% apart)`);
+  check('the plan estimate is within 15% of the recorded duration', off <= 0.15, `estimated ${estimated} s, actual ${actual} s`);
 
   const withShots = results.steps.filter((s) => s.shot);
   check('every step has a screenshot file', withShots.length === results.steps.length && withShots.every((s) => fs.existsSync(path.join(r1.runDir, s.shot))));

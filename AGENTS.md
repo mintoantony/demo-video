@@ -24,7 +24,7 @@ Your brief says which mode you are in: PLAN or RECORD. If it does not say, ask f
 
 ## PLAN mode
 
-1. Read the brief: URL, source checklist or steps, actors, environment, reset command.
+1. Read the brief: URL, source checklist or steps, actors, environment, reset command. Look for an `app.json` next to the walkthrough (or the one the brief names) before asking for sign-in, environment or reset details. Starting conditions go into the script as `rec.precheck(...)`, not into prose.
 2. Explore read-only. Open pages, read headings, links and buttons. Do not click anything that changes data.
 3. Write the walkthrough script from the template. Set `scriptPath: import.meta.url`, `environment`, `resetCommand` and `openQuestions`. Mark data-changing steps with `{ changesData: true }`, and add `irreversible: true` where it applies.
 4. Run it with `DEMO_MODE=plan`. This writes `storyboard.md` and opens no browser.
@@ -67,3 +67,5 @@ Reply in short plain sentences:
 - Deviations from the storyboard, called out.
 - Frame quality: blank frames, unjustified static holds, progress notes.
 - Whether the environment was reset, and how.
+- Precheck results (name, ok, seen). If a precheck refused the recording, say which one, what it saw, and the reset command it suggested. Do not work round it.
+- If this was the first successful run for the app, write or update `app.json` next to the script.

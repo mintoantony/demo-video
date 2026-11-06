@@ -2,7 +2,7 @@
 // Step 3 of the last chapter is deliberately different from its expectation.
 import { createRecorder } from '../skills/demo-video/scripts/recorder.mjs';
 
-export async function runFixtureWalkthrough({ baseUrl, outRoot, fast = true, mode, planDir, scriptPath, approvedHash }) {
+export async function runFixtureWalkthrough({ baseUrl, outRoot, fast = true, mode, planDir, scriptPath, approvedHash, prechecks, profile, environment }) {
   const rec = await createRecorder({
     title: 'Fixture Garden Co: request walkthrough',
     subtitle: 'A test run on an invented app',
@@ -12,11 +12,19 @@ export async function runFixtureWalkthrough({ baseUrl, outRoot, fast = true, mod
     cardMs: fast ? 2500 : 4000,
     mode, planDir, approvedHash,
     scriptPath: scriptPath || import.meta.url,
-    environment: 'local',
-    resetCommand: 'none needed: the fixture app keeps no server state',
+    // environment and the reset command come from tests/app.json (the app profile next to this script)
+    ...(environment ? { environment } : {}),
+    ...(profile !== undefined ? { profile } : {}),
     openQuestions: ['Should the list chapter be shown to a manager as well?'],
   });
   try {
+    // Scripted precondition: runs before the title card, in a separate context that is not recorded.
+    await rec.precheck('The sign-in page offers the two fixture people', async ({ page, goto }) => {
+      await goto('/index.html');
+      const n = await page.locator('.card').count();
+      return { ok: n === 2, seen: `${n} person cards on the sign-in page` };
+    });
+    if (prechecks) await prechecks(rec);
     await rec.titleCard();
 
     await rec.chapter('Sign in', { actor: 'Ada Fixture (Manager)', url: '/index.html' }, async ({ page, step, click }) => {
@@ -55,7 +63,7 @@ export async function runFixtureWalkthrough({ baseUrl, outRoot, fast = true, mod
         async () => {
           const t = await page.locator('#rep').innerText();
           return { ok: t.includes('report is ready'), seen: t };
-        });
+        }, { estSec: 7 });
     });
 
     // Regression: chapters share one page. A chapter without a url must find the page as it was left.

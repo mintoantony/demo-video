@@ -1,0 +1,18 @@
+{
+  "name": "Fixture Garden Co portal",
+  "environment": "local",
+  "signIn": {
+    "description": "Open the portal; it redirects to the sign-in page. Choose a person card.",
+    "kind": "card",
+    "url": "/app/signin.html",
+    "selector": "#in-{name}",
+    "signedIn": "nav.app-nav"
+  },
+  "signOut": {
+    "description": "Press Sign out in the portal header.",
+    "selector": "#signout",
+    "signedOut": "#msg"
+  },
+  "reset": { "command": "none needed: the fixture app keeps no server state", "cwd": ".", "limit": 2 },
+  "notes": "Invented app used by the test suite. The sign-in cards are #in-ada and #in-ben."
+}

@@ -30,9 +30,20 @@ const rec = await createRecorder({
   environment: 'local',                                  // TODO: local, shared or production
   resetCommand: 'TODO: command that puts the data back, or "none needed"',
   openQuestions: [],                                     // TODO: things the user should decide
+  // App profile: an app.json next to this file is read automatically (name, baseUrl, environment,
+  // signIn, signOut, reset). Or point at one:  profile: './app.json'. See app.example.json.
+  // With a signIn recipe, use  await rec.signIn(page, 'ada')  and  await rec.signOut(page).
 });
 
 try {
+  // Preconditions are prechecks, not prose. They run before the title card in a window that is
+  // not recorded. If one fails, nothing is recorded and no run folder is left.
+  await rec.precheck('TODO: the starting state, e.g. the form is still open and unsubmitted', async ({ page, goto }) => {
+    await goto('/');
+    const n = await page.locator('h1').count();
+    return { ok: n > 0, seen: `${n} headings on the start page` };   // say what is there, not what you hope
+  });
+
   await rec.titleCard();
 
   // ---- Chapter 1: sign in -------------------------------------------------

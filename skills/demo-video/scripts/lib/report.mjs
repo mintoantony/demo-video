@@ -86,7 +86,7 @@ export function writeOutputs(S) {
   const results = {
     title: o.title, subtitle: o.subtitle, baseUrl: o.baseUrl, viewport: o.viewport,
     startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(),
-    totalSeconds: +total.toFixed(1), mode, summary, ffmpeg, frameQuality: fq, notes, chapters, clips, steps,
+    totalSeconds: +total.toFixed(1), mode, summary, ffmpeg, frameQuality: fq, notes, prechecks: S.prechecks || [], environment: o.environment || 'unknown', chapters, clips, steps,
   };
   fs.writeFileSync(path.join(runDir, 'results.json'), JSON.stringify(results, null, 2));
   fs.writeFileSync(path.join(runDir, 'chapters.json'), JSON.stringify(timeline, null, 2));
@@ -97,6 +97,7 @@ export function writeOutputs(S) {
     `# ${o.title}`, '', o.subtitle ? `${o.subtitle}\n` : '',
     `Run: ${startedAt.toISOString()} | Length: ${mmss(total)} | Steps: ${summary.steps} | As expected: ${summary.pass} | Different: ${summary.different} | Could not do: ${summary.couldNot}`, '',
     `Mode: ${mode === 'clips' ? 'clips (ffmpeg cut one clip per chapter and card from the shared segment videos)' : 'segments (chapters share segment videos; no per-chapter clips)'}`, '',
+    ...((S.prechecks || []).length ? ['## Before recording', '', '| Precheck | Result | What was seen |', '|---|---|---|', ...S.prechecks.map((p) => `| ${cell(p.name)} | ${p.ok ? 'passed' : 'FAILED'} | ${cell(p.seen)} |`), ''] : []),
     '| Chapter | Step | Result | What was seen |', '|---|---|---|---|',
     ...steps.map((s) => `| ${cell(s.chapter)} | ${s.step}. ${cell(s.label)} | ${s.status} | ${cell(s.seen)} |`), '',
     '## Chapters in the combined video', '',

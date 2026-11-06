@@ -25,18 +25,20 @@ import { card, asLoc } from './lib/cards.mjs';
 import { closeSegment } from './lib/segments.mjs';
 import { chapter } from './lib/chapter.mjs';
 import { summarise, writeOutputs } from './lib/report.mjs';
+import { runPrecheck, gatePrechecks } from './lib/precheck.mjs';
+import { applyProfile, signInWith, signOutWith, productionAllowed } from './lib/profile.mjs';
 
 export { analyseFrames, resolveScript, scriptHash, ENGINE_VERSION };
 
 export async function createRecorder(opts = {}) {
-  const o = {
+  const o = applyProfile({
     title: 'Walkthrough', subtitle: '', baseUrl: '', outRoot: './demo-runs',
     viewport: { width: 1920, height: 1080 }, slowMo: 150, headless: true, stepPause: 1800,
     cardMs: 4000,
     frameMonitor: true, monitorMs: 400, wordsPerSec: 3, minHold: 1500, maxHold: 5000,
     progressNoteMs: 3000, introMs: 2000,
     ...opts,
-  };
+  });
   // Time a viewer needs to read a caption: ~3 words/s, at least minHold, at most maxHold,
   // longer only when the text is long enough to need it (capped at 12 s).
   const readMs = (t) => {
@@ -46,6 +48,10 @@ export async function createRecorder(opts = {}) {
   const mode = o.mode || process.env.DEMO_MODE || 'record';
   if (mode === 'plan') return createPlanner(o, readMs);
 
+  // Production gate: a profile or option that says production needs an explicit environment variable as well as the approval.
+  if (o.environment === 'production' && !productionAllowed()) {
+    throw new Error('This walkthrough targets a PRODUCTION environment. Besides the approved storyboard, recording needs DEMO_ALLOW_PRODUCTION=1 in the environment. Not recording.');
+  }
   // Approval gate: nothing is recorded until the user has confirmed the storyboard.
   const approval = checkApproval(o);
 
@@ -62,7 +68,7 @@ export async function createRecorder(opts = {}) {
   const S = {
     o, readMs, browser, approval, mode, startedAt, runDir, clipsDir, shotsDir, tmpDir,
     ff: findFfmpeg(),
-    clips: [], steps: [], chapters: [], notes: [], items: [], segments: [],
+    clips: [], prechecks: [], refused: null, steps: [], chapters: [], notes: [], items: [], segments: [],
     storage: undefined, n: 0, cur: null, curSeg: null, finished: false,
     log: (m) => console.log(`[${mmss((Date.now() - t0) / 1000)}] ${m}`),
     url: (u) => (/^https?:/i.test(u) || !o.baseUrl ? u : new URL(u, o.baseUrl).toString()),
@@ -77,6 +83,7 @@ export async function createRecorder(opts = {}) {
     get page() { return (S.cur || S.curSeg)?.page; },
 
     async titleCard(extraLines = []) {
+      await gatePrechecks(S);
       const lines = [o.subtitle, ...extraLines].filter(Boolean);
       return card(S, 'title', o.title, lines, o.cardMs);
     },
@@ -87,7 +94,11 @@ export async function createRecorder(opts = {}) {
       return card(S, 'closing', 'End of walkthrough', lines ?? auto, o.cardMs);
     },
 
-    chapter: (title, optsOrFn, maybeFn) => chapter(S, title, optsOrFn, maybeFn),
+    precheck: (name, fn) => runPrecheck(S, name, fn),
+    signIn: (page, name) => signInWith(o.profileData, page, name, o.baseUrl),
+    signOut: (page) => signOutWith(o.profileData, page, o.baseUrl),
+
+    async chapter(title, optsOrFn, maybeFn) { await gatePrechecks(S); return chapter(S, title, optsOrFn, maybeFn); },
 
     async click(l) {
       const loc = asLoc(pageNow(), l);
@@ -107,6 +118,7 @@ export async function createRecorder(opts = {}) {
     },
 
     async finish() {
+      await gatePrechecks(S); // a refusal must survive a return inside finally
       if (S.finished) return api.result;
       S.finished = true;
       try { await closeSegment(S); } catch (e) { S.notes.push(`closing the last segment: ${firstLine(e.message)}`); }
