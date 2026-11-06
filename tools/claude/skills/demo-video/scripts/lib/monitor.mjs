@@ -16,14 +16,26 @@ export function analyseFrames(samples, opts = {}) {
   const medianGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1;
   const r2 = (x) => +x.toFixed(2);
 
+  // A single blank sample taken while the page was mid-navigation (its text could not be read)
+  // is the browser's own paint gap between two documents: under one sample interval, reported
+  // as a navigation flash, not as a violation. Any longer run, or a blank on a readable page, is.
   const blankFrames = [];
+  const navigationFlashes = [];
   let run = null;
+  const close = () => {
+    if (!run) return;
+    const item = { start: r2(run.start), end: r2(run.end), count: run.count };
+    if (run.count === 1 && run.unread) navigationFlashes.push(item); else blankFrames.push(item);
+    run = null;
+  };
   for (const x of s) {
     const isBlank = x.blank && !(x.words > 0);
-    if (isBlank) { if (!run) run = { start: x.t, end: x.t, count: 0 }; run.end = x.t; run.count += 1; }
-    else if (run) { blankFrames.push({ start: r2(run.start), end: r2(run.end), count: run.count }); run = null; }
+    if (isBlank) {
+      if (!run) run = { start: x.t, end: x.t, count: 0, unread: true };
+      run.end = x.t; run.count += 1; if (x.read !== false) run.unread = false;
+    } else close();
   }
-  if (run) blankFrames.push({ start: r2(run.start), end: r2(run.end), count: run.count });
+  close();
 
   const staticRuns = [];
   let g = null;
@@ -42,7 +54,7 @@ export function analyseFrames(samples, opts = {}) {
   }
   flush();
   return {
-    samples: s.length, blankFrames, staticRuns,
+    samples: s.length, blankFrames, navigationFlashes, staticRuns,
     unjustified: staticRuns.filter((r) => !r.justified),
     justifiedLongHolds: staticRuns.filter((r) => r.justified),
   };
@@ -92,6 +104,7 @@ export function createMonitor(S) {
           const t = (Date.now() - startedMs) / 1000;
           const hash = createHash('sha1').update(buf).digest('hex').slice(0, 12);
           let w = 0;
+          let read = true;
           try {
             w = await page.evaluate(() => {
               const c = (id) => { const e = document.getElementById(id); return e ? e.innerText : ''; };
@@ -100,9 +113,9 @@ export function createMonitor(S) {
               const b = document.body ? document.body.innerText : '';
               return (b.match(/\S+/g) || []).length;
             });
-          } catch { /* mid navigation */ }
+          } catch { read = false; /* mid navigation: the text could not be read */ }
           const blank = await blankCheck(hash, buf);
-          samples.push({ t, hash, words: w, blank });
+          samples.push({ t, hash, words: w, blank, read });
         } catch { /* page busy or closing: skip this sample */ }
         if (!stopFlag) await sleep(S.o.monitorMs);
       }

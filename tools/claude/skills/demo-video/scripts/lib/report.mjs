@@ -11,6 +11,7 @@ export function frameQualityMd(fq) {
   const out = [
     `Checked ${fq.samples} frames in ${fq.clipsChecked} clips (about one every 0.4 s).`, '',
     `- Blank frames with no caption or card text: ${fq.blankFrameRuns}`,
+    `- Navigation flashes (one blank sample mid page-load, not a violation): ${fq.navigationFlashes}`,
     `- Identical frame held too long without a reason: ${fq.unjustifiedStaticRuns}`,
     `- Long holds that are fine (long text to read): ${fq.justifiedLongHolds}`,
     `- Progress notes shown during long actions: ${fq.progressNotes}`,
@@ -39,11 +40,12 @@ export function frameQuality(S) {
   if (!S.o.frameMonitor) return { enabled: false };
   const perClip = S.clips.filter((c) => c.frames).map((c) => ({
     clip: c.file, samples: c.frames.samples, firstContentMs: c.frames.firstContentMs,
-    blankFrames: c.frames.blankFrames, unjustified: c.frames.unjustified, justifiedLongHolds: c.frames.justifiedLongHolds,
+    blankFrames: c.frames.blankFrames, navigationFlashes: c.frames.navigationFlashes || [], unjustified: c.frames.unjustified, justifiedLongHolds: c.frames.justifiedLongHolds,
   }));
   return {
     enabled: true, clipsChecked: perClip.length, samples: perClip.reduce((a, c) => a + c.samples, 0),
     blankFrameRuns: perClip.reduce((a, c) => a + c.blankFrames.length, 0),
+    navigationFlashes: perClip.reduce((a, c) => a + c.navigationFlashes.length, 0),
     unjustifiedStaticRuns: perClip.reduce((a, c) => a + c.unjustified.length, 0),
     justifiedLongHolds: perClip.reduce((a, c) => a + c.justifiedLongHolds.length, 0),
     progressNotes: S.steps.reduce((a, s) => a + (s.progressNotes || 0), 0),

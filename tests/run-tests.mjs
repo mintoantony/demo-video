@@ -6,7 +6,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runFixtureWalkthrough } from './fixture-walkthrough.mjs';
-import { ENGINE_VERSION } from '../skills/demo-video/scripts/recorder.mjs';
+import { ENGINE_VERSION, analyseFrames } from '../skills/demo-video/scripts/recorder.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const outRoot = path.join(here, 'out');
@@ -192,7 +192,17 @@ try {
 
   const fq = results.frameQuality || {};
   check('frame monitor ran and wrote data to results.json', fq.enabled === true && fq.clipsChecked === results.clips.length, `${fq.samples} samples`);
-  check('zero blank frames', fq.blankFrameRuns === 0, `runs: ${fq.blankFrameRuns}`);
+  const blankWhere = (fq.perClip || []).flatMap((c) => c.blankFrames.map((b) => `${c.clip} ${b.start}-${b.end}s x${b.count}`)).join('; ');
+  check('zero blank frames', fq.blankFrameRuns === 0, `runs: ${fq.blankFrameRuns}${blankWhere ? ' at ' + blankWhere : ''}; navigation flashes: ${fq.navigationFlashes}`);
+  {
+    // The rule itself: one unreadable blank sample is a flash; two in a row, or a readable blank, is a violation.
+    const mk = (t, blank, read = true) => ({ t, hash: 'h' + t, words: 0, blank, read });
+    const a = analyseFrames([mk(0, false), mk(0.4, true, false), mk(0.8, false)]);
+    const b = analyseFrames([mk(0, false), mk(0.4, true, false), mk(0.8, true, false), mk(1.2, false)]);
+    const c = analyseFrames([mk(0, false), mk(0.4, true, true), mk(0.8, false)]);
+    check('frame rule: a single mid-navigation blank is a flash, not a violation', a.blankFrames.length === 0 && a.navigationFlashes.length === 1);
+    check('frame rule: a longer or readable blank is a violation', b.blankFrames.length === 1 && c.blankFrames.length === 1);
+  }
   check('zero unjustified static holds', fq.unjustifiedStaticRuns === 0, `runs: ${fq.unjustifiedStaticRuns}`);
   const slow = results.steps.find((x) => x.label === 'Open the Slow report');
   check('the slow page (7 s) triggered a progress note', !!slow && slow.progressNotes >= 1 && fq.progressNotes >= 1, `notes: ${slow && slow.progressNotes}`);
