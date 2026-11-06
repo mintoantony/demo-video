@@ -5,7 +5,7 @@
 // If the script changes afterwards, recording refuses until you approve again.
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveScript, scriptHash } from './recorder.mjs';
+import { resolveScript, scriptHash, ENGINE_VERSION } from './recorder.mjs';
 
 const arg = process.argv[2];
 if (!arg) { console.error('Usage: node approve.mjs <walkthrough.mjs> [planDir]'); process.exit(2); }
@@ -18,6 +18,7 @@ if (!fs.existsSync(path.join(dir, 'storyboard.md'))) {
 }
 const sha = scriptHash(sp);
 const file = path.join(dir, 'storyboard.approved.json');
-fs.writeFileSync(file, JSON.stringify({ approved: true, script: path.basename(sp), scriptSha256: sha, approvedAt: new Date().toISOString() }, null, 2));
+fs.writeFileSync(file, JSON.stringify({ approved: true, script: path.basename(sp), scriptSha256: sha, engineVersion: ENGINE_VERSION, approvedAt: new Date().toISOString() }, null, 2));
 console.log(`Approved. Hash: ${sha}`);
+console.log(`Engine: ${ENGINE_VERSION}`);
 console.log(`Marker: ${file}`);
