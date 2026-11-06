@@ -9,7 +9,7 @@ jobs:
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +47,9 @@ jobs:
       - name: Voice-over setup (repo copy)
         run: python skills/demo-voiceover/setup_voice.py
       - name: Voice-over tests
-        run: python tests/test_voiceover.py
+        timeout-minutes: 35
+        # -u: print each test as it finishes, so a slow runner is told apart from a hang
+        run: python -u tests/test_voiceover.py
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
