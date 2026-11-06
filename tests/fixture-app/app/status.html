@@ -1,0 +1,7 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Request status</title><link rel="stylesheet" href="portal.css"></head>
+<body><header><b>Fixture Garden Portal</b><a href="/app/">Back to portal</a></header>
+<main><h1>Request status</h1><p id="status">Loading...</p></main>
+<script>
+fetch('/api/request/last').then(function(r){return r.json();}).then(function(x){
+ document.getElementById('status').textContent=x?('Request '+x.id+' saved: '+x.plant+' ('+x.by+')'):'No request has been submitted.';});
+</script></body></html>

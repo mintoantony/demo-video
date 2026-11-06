@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Portal request</title><link rel="stylesheet" href="portal.css"></head>
+<body><header><b>Fixture Garden Portal</b><a href="/app/">Back to portal</a></header>
+<main><h1>Portal request</h1>
+<label>Plant name<input id="plant"></label>
+<label>Note<input id="note"></label>
+<button id="submit">Submit</button>
+<p>Nothing is saved until you press Submit.</p></main>
+<script>
+document.getElementById('submit').onclick=function(){
+ fetch('/api/request',{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({plant:document.getElementById('plant').value,note:document.getElementById('note').value})})
+ .then(function(){location.href='/app/status.html';});};
+</script></body></html>

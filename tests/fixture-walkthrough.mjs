@@ -97,6 +97,82 @@ export async function runFixtureWalkthrough({ baseUrl, outRoot, fast = true, mod
         });
     });
 
+    // ---- The portal: cookie sign-in, a client-routed app, a slow API, a form that saves only on Submit ----
+    let spaLoad = null;
+    let savedBefore = 0;
+    const countSaved = (page) => page.evaluate(() => fetch('/api/request/count').then((r) => r.json()).then((j) => j.count));
+    await rec.chapter('Portal sign-in', { actor: 'Ada Fixture (Manager)', url: '/app/' }, async ({ page, step, click }) => {
+      await step('Open the portal without signing in', 'The portal sends us to its sign-in page (no cookie yet)',
+        null,
+        async () => ({ ok: page.url().endsWith('/app/signin.html'), seen: 'at ' + new URL(page.url()).pathname }));
+      await step('Sign in as Ada Fixture', 'The portal opens and its navigation appears after a short wait',
+        async () => { await click('#in-ada'); await page.locator('nav.app-nav a', { hasText: 'Reports' }).waitFor({ timeout: 8000 }); },
+        async () => ({ ok: (await page.locator('#who').innerText()).includes('Ada Fixture'), seen: await page.locator('#who').innerText() }));
+    });
+
+    await rec.chapter('Portal reports', { actor: 'Ada Fixture (Manager)' }, async ({ page, step, click }) => {
+      await step('Open Reports from the navigation', 'The Reports view loads its report from a slow service (about 2.5 s), with no page reload',
+        async () => {
+          spaLoad = await page.evaluate(() => window.__spaLoad);
+          await click('nav.app-nav a[data-view="reports"]');
+          await page.locator('#rep', { hasText: 'is ready' }).waitFor({ timeout: 15000 });
+        },
+        async () => {
+          const same = (await page.evaluate(() => window.__spaLoad)) === spaLoad;
+          const t = await page.locator('#rep').innerText();
+          return { ok: same && page.url().endsWith('/app/reports'), seen: `${t} (url ${new URL(page.url()).pathname}, same page load: ${same})` };
+        }, { estSec: 3 });
+    });
+
+    await rec.chapter('Portal continued', { actor: 'Ada Fixture (Manager)' }, async ({ page, step, click }) => {
+      await step('Check the portal view survived the chapter boundary', 'Still on /app/reports, same page load, still signed in',
+        null,
+        async () => {
+          const same = (await page.evaluate(() => window.__spaLoad)) === spaLoad;
+          const ok = same && page.url().endsWith('/app/reports') && (await page.locator('#who').innerText()).includes('Ada');
+          return { ok, seen: ok ? 'portal view kept across the chapter boundary' : `lost: url ${page.url()}, same load ${same}` };
+        });
+      await step('Open Team from the navigation', 'The Team view, still without a reload',
+        () => click('nav.app-nav a[data-view="team"]'),
+        async () => ({ ok: page.url().endsWith('/app/team') && (await page.locator('#team').count()) === 1, seen: 'at ' + new URL(page.url()).pathname }));
+    });
+
+    await rec.chapter('Fill in the portal request', { actor: 'Ada Fixture (Manager)', url: '/app/request.html' }, async ({ page, step, type }) => {
+      await step('Open the request form while signed in', 'The form opens (the cookie carried over, no sign-in redirect)',
+        null,
+        async () => ({ ok: page.url().endsWith('/app/request.html'), seen: 'at ' + new URL(page.url()).pathname }));
+      await step('Fill in the form without submitting', 'Plant and note filled in; nothing is saved yet',
+        async () => { savedBefore = await countSaved(page); await type('#plant', 'Thyme'); await type('#note', 'Shade is fine'); },
+        async () => {
+          const n = await countSaved(page);
+          return { ok: (await page.locator('#plant').inputValue()) === 'Thyme' && n === savedBefore, seen: `filled in, not submitted (${n} saved on the server)` };
+        });
+    });
+
+    await rec.chapter('Submit the portal request', { actor: 'Ada Fixture (Manager)' }, async ({ page, step, click }) => {
+      await step('Press Submit on the portal form', 'The status page says the request is saved',
+        async () => {
+          if ((await page.locator('#plant').inputValue()) !== 'Thyme') throw new Error('the form was not still filled in');
+          await click('#submit');
+          await page.locator('#status', { hasText: 'saved' }).waitFor({ timeout: 5000 });
+        },
+        async () => {
+          const t = await page.locator('#status').innerText();
+          const n = await countSaved(page);
+          return { ok: t.includes('Thyme') && t.includes('Ada Fixture') && n === savedBefore + 1, seen: `${t} (${n} saved on the server)` };
+        },
+        { changesData: true });
+    });
+
+    await rec.chapter('Signed out check', { actor: 'A new visitor', fresh: true, url: '/app/' }, async ({ page, step }) => {
+      await step('Open the portal as a fresh visitor', 'The sign-in page says "You are signed out." (the earlier session is not shared)',
+        null,
+        async () => {
+          const t = await page.locator('#msg').innerText();
+          return { ok: page.url().endsWith('/app/signin.html') && t.includes('signed out'), seen: t + ' at ' + new URL(page.url()).pathname };
+        });
+    });
+
     await rec.closingCard();
   } finally {
     return await rec.finish();

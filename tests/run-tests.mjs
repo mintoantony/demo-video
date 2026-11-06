@@ -1,5 +1,5 @@
 // Run with: node tests/run-tests.mjs   (exit code 1 on any failure)
-import http from 'node:http';
+import { startFixtureServer } from './fixture-server.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,20 +9,11 @@ import { runFixtureWalkthrough } from './fixture-walkthrough.mjs';
 import { ENGINE_VERSION } from '../skills/demo-video/scripts/recorder.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const appDir = path.join(here, 'fixture-app');
 const outRoot = path.join(here, 'out');
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
-const server = http.createServer(async (req, res) => {
-  if (req.url.split('?')[0] === '/slow.html') await new Promise((r) => setTimeout(r, 7000)); // the deliberately slow page
-  const p = (req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0]);
-  const f = path.join(appDir, path.normalize(p));
-  if (!f.startsWith(appDir) || !fs.existsSync(f)) { res.writeHead(404); res.end('not found'); return; }
-  res.writeHead(200, { 'content-type': types[path.extname(f)] || 'text/plain' });
-  res.end(fs.readFileSync(f));
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r)); // 127.0.0.1, not localhost (::1 trouble on some PCs)
-const baseUrl = `http://127.0.0.1:${server.address().port}`;
+const fixture = await startFixtureServer(); // 127.0.0.1, cookie sign-in, slow API, form state
+const { server, state } = fixture;
+const baseUrl = fixture.baseUrl;
 
 let failed = 0;
 const check = (name, cond, detail = '') => {
@@ -130,6 +121,15 @@ try {
   check('chapters.json has segment, segStart and segEnd', ch.every((c) => c.segment >= 1 && c.segEnd > c.segStart));
   const draft = results.steps.find((x) => x.label === 'Check the draft survived the chapter boundary');
   check('regression: unsaved input and page load survive a chapter boundary', !!draft && draft.status === 'PASS' && String(draft.seen).includes('draft kept'), draft && draft.seen);
+
+  const stepOf = (l) => results.steps.find((x) => x.label === l);
+  const passed = (l) => { const s = stepOf(l); return !!s && s.status === 'PASS'; };
+  check('portal: the SPA view and page load survive the chapter boundary', passed('Check the portal view survived the chapter boundary') && String(stepOf('Check the portal view survived the chapter boundary').seen).includes('kept'), (stepOf('Check the portal view survived the chapter boundary') || {}).seen);
+  check('portal: client-side navigation reached the slow report with no reload', passed('Open Reports from the navigation'), (stepOf('Open Reports from the navigation') || {}).seen);
+  check('portal: the cookie session carries over to a later chapter', passed('Open the request form while signed in') && state.signIns >= 1, (stepOf('Open the request form while signed in') || {}).seen);
+  check('portal: the form is unsubmitted until Submit, saved after it', passed('Fill in the form without submitting') && passed('Press Submit on the portal form'), (stepOf('Press Submit on the portal form') || {}).seen);
+  check('portal: a fresh chapter is signed out', passed('Open the portal as a fresh visitor'), (stepOf('Open the portal as a fresh visitor') || {}).seen);
+  check('portal: the server holds exactly one saved request per recording so far', state.submissions.length === 1, `${state.submissions.length}`);
 
   const fq = results.frameQuality || {};
   check('frame monitor ran and wrote data to results.json', fq.enabled === true && fq.clipsChecked === results.clips.length, `${fq.samples} samples`);

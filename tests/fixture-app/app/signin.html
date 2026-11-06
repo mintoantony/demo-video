@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Portal sign-in</title><link rel="stylesheet" href="portal.css"></head>
+<body><header><b>Fixture Garden Portal</b></header>
+<main><h1>Portal sign-in</h1><p id="msg">You are signed out.</p>
+<div class="cards">
+<button class="card" id="in-ada" data-who="Ada">Ada Fixture (Manager)</button>
+<button class="card" id="in-ben" data-who="Ben">Ben Sample (Staff)</button>
+</div></main>
+<script>
+document.querySelectorAll('button.card').forEach(function(b){b.onclick=function(){
+ fetch('/api/signin?name='+b.dataset.who,{method:'POST'}).then(function(){location.href='/app/';});};});
+</script></body></html>
