@@ -14,7 +14,7 @@ Built 2026-11-05 by Minto Antony.
 | `skills/demo-video/scripts/walkthrough.template.mjs` | Template for a walkthrough script |
 | `skills/demo-video/references/` | How to write good walkthroughs |
 | `skills/demo-voiceover/SKILL.md` | The voice-over skill (script, confirm, synthesise) |
-| `skills/demo-voiceover/scripts/` | `make_script.py`, `approve.py`, `voiceover.py`, `tts.py`, `common.py` |
+| `skills/demo-voiceover/scripts/` | `make_script.py`, `draft.py`, `approve.py`, `voiceover.py`, `tts.py`, `common.py` |
 | `skills/demo-voiceover/setup_voice.py`, `requirements.txt` | Creates `.venv` and downloads the default voice (safe to run again) |
 | `skills/demo-voiceover/references/voiceover.md` | Engines, voices, timing rules, troubleshooting |
 | `AGENTS.md` | Source of the `demo-video-recorder` agent (Sonnet) |
@@ -103,7 +103,7 @@ Each run has its own timestamped folder under `demo-runs/`. Earlier runs are nev
 
 - Chapters share one page; `fresh: true` starts signed out. Without ffmpeg you get one webm per segment and a player that seeks to each chapter, no single mp4.
 - `/demo-video` records no audio. Use `/demo-voiceover` for speech.
-- Voice-over: English voices only by default. Speech length is estimated at 2.5 words/s, then measured.
+- Voice-over: English voices only by default. Speech length is estimated at 2.5 words/s, then measured. The draft narration fits its slots; speech is normalised to about -16 LUFS with a -1.5 dB ceiling.
 - Chromium only.
 - A step that changes data needs a reset command, or it must be marked and approved.
 

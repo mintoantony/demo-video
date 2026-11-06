@@ -4,11 +4,12 @@
 Phase 1 (nothing is synthesised). Reads <run>/results.json and writes
 <run>/voiceover/narration.json (the contract) and narration.md (what the user reads).
 
-The draft wording is mechanical. Claude rewrites the "text" fields in narration.json into
-natural narration, then runs `make_script.py <run> --render` to recompute timings and
+The draft is plain narration that already fits every slot (draft.py shortens a line by dropping
+clauses before it may overflow). Claude may polish the "text" fields in narration.json, then runs `make_script.py <run> --render` to recompute timings and
 regenerate narration.md. Keep the line structure (ids, clip, atSec, budgetSec).
 """
 import argparse, json, sys
+import draft as D
 from pathlib import Path
 from common import est_seconds, load_json, load_results, voice_dir, LEAD_OFFSET, STEP_OFFSET
 
@@ -22,60 +23,40 @@ def clip_duration(res, rel):
     return 0.0
 
 
-def lower_first(s):
-    return s[:1].lower() + s[1:] if s and not s[:2].isupper() else s
-
-
-def step_text(s):
-    label = s["label"].rstrip(".")
-    expect = s["expect"].rstrip(".")
-    seen = (s.get("seen") or "").rstrip(".")
-    st = s["status"]
-    if st == "PASS":
-        return f"{label}. As expected, {lower_first(expect)}."
-    if st == "DIFFERENT":
-        return (f"{label}. This did not go as expected. We expected {lower_first(expect)}, "
-                f"but what actually appeared was: {seen}.")
-    if st == "COULD NOT DO":
-        return f"{label}. This step could not be done. {seen}."
-    return f"{label}. {seen or expect}."
-
-
-def build(run, voice, engine):
+def build(run, voice, engine, style="plain"):
     res = load_results(run)
     title = res["title"]
     summ = res.get("summary", {})
     clips = res["clips"]
     first, last = clips[0], clips[-1]
-    sub = (res.get("subtitle") or "").rstrip(".")
-    lines = [dict(id="intro", kind="intro", clip=first["file"], atSec=LEAD_OFFSET,
-                  budgetSec=round(float(first["durationSec"]) - LEAD_OFFSET, 1),
-                  text=f"{title}." + (f" {sub}." if sub else ""))]
+    b0 = round(float(first["durationSec"]) - LEAD_OFFSET, 1)
+    lines = [dict(id="intro", kind="intro", clip=first["file"], atSec=LEAD_OFFSET, budgetSec=b0,
+                  text=D.intro_text(title, res.get("subtitle") or "", b0))]
     steps = res["steps"]
-    for ci, ch in enumerate(res.get("chapters") or [], 1):
+    chapters = res.get("chapters") or []
+    prev_actor = None
+    for ci, ch in enumerate(chapters, 1):
         cs = [s for s in steps if s["chapterIndex"] == ci]
         dur = clip_duration(res, ch["clip"])
         first_at = cs[0]["atSec"] if cs else dur
-        lead = f"Chapter {ci}: {ch['title']}."
-        if ch.get("actor"):
-            lead += f" Here we act as {ch['actor']}."
-        lines.append(dict(id=f"c{ci}", kind="lead", clip=ch["clip"], atSec=LEAD_OFFSET,
-                          budgetSec=round(max(first_at - LEAD_OFFSET, 0), 1), text=lead))
+        lb = round(max(first_at - LEAD_OFFSET, 0), 1)
+        lines.append(dict(id=f"c{ci}", kind="lead", clip=ch["clip"], atSec=LEAD_OFFSET, budgetSec=lb,
+                          text=D.lead_text(ci, len(chapters), ch, prev_actor, lb, style)))
+        prev_actor = ch.get("actor") or prev_actor
         for k, s in enumerate(cs):
             at = round(s["atSec"] + STEP_OFFSET, 1)
             nxt = cs[k + 1]["atSec"] if k + 1 < len(cs) else dur
+            b = round(max(nxt - at, 0), 1)
             lines.append(dict(id=f"c{ci}s{s['step']}", kind="step", clip=ch["clip"], atSec=at,
-                              budgetSec=round(max(nxt - at, 0), 1), status=s["status"], text=step_text(s)))
+                              budgetSec=b, status=s["status"], text=D.step_text(s, b, style)))
     n = summ.get("steps", len(steps))
-    closing = f"That completes {title}. "
     bad = (summ.get("different", 0) or 0) + (summ.get("couldNot", 0) or 0)
-    if bad:
-        closing += f"{summ.get('pass', 0)} of {n} steps went as expected, and {bad} did not."
-    else:
-        closing += f"All {n} steps went as expected."
-    lines.append(dict(id="closing", kind="closing", clip=last["file"], atSec=LEAD_OFFSET,
-                      budgetSec=round(float(last["durationSec"]) - LEAD_OFFSET, 1), text=closing))
-    return dict(run=str(Path(run).name), title=title, engine=engine, voice=voice, lines=lines)
+    bl = round(float(last["durationSec"]) - LEAD_OFFSET, 1)
+    lines.append(dict(id="closing", kind="closing", clip=last["file"], atSec=LEAD_OFFSET, budgetSec=bl,
+                      text=D.closing_text(title, n, bad, summ.get("pass", 0), bl)))
+    return dict(run=str(Path(run).name), title=title, engine=engine, voice=voice, style=style, lines=lines)
+
+
 
 
 def finish(doc):
@@ -119,6 +100,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run")
     ap.add_argument("--render", action="store_true", help="recompute timings and narration.md from an edited narration.json")
+    ap.add_argument("--style", default="plain", choices=["plain", "brief"], help="plain: action then outcome (default); brief: outcome only")
     ap.add_argument("--force", action="store_true", help="overwrite an existing narration.json draft")
     ap.add_argument("--voice", default=None)
     ap.add_argument("--engine", default=None, choices=["piper", "system", "edge"])
@@ -141,7 +123,7 @@ def main():
     else:
         if nj.exists() and not a.force:
             sys.exit(f"{nj} exists (it may hold reworded lines). Use --render to refresh narration.md or --force to redraft.")
-        doc = build(run, a.voice or DEFAULT_VOICE, a.engine or "piper")
+        doc = build(run, a.voice or DEFAULT_VOICE, a.engine or "piper", a.style)
     finish(doc)
     nj.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
     (vd / "narration.md").write_text(render_md(doc, res), encoding="utf-8")

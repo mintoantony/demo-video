@@ -17,8 +17,8 @@ Add a voice to a silent demo run. Work in two phases. First write the narration 
 
 ## Phase 1: the script (nothing is spoken yet)
 
-1. Run `python <skill>/scripts/make_script.py <run>`. It writes `<run>/voiceover/narration.json` and `narration.md`. The draft wording is mechanical.
-2. Rewrite the `text` of every line in `narration.json` into natural, short narration. Keep the ids, clips and timings. Rules:
+1. Run `python <skill>/scripts/make_script.py <run>`. It writes `<run>/voiceover/narration.json` and `narration.md`. The draft is already usable: lead-ins like "First, sign in.", steps as "We <action>. <outcome>." built from `expect`, wording that states what happened for DIFFERENT and COULD NOT DO, and every line shortened to fit its slot (0 overflow normally). `--style brief` speaks the outcome only. It is still a draft.
+2. Polish the `text` of the lines in `narration.json` into natural, short narration (you can leave lines that already read well). Keep the ids, clips and timings. Rules:
    - Speak the way a colleague would. One or two short sentences per step. No selectors, no URLs read aloud, no "step 3".
    - A line must fit its `budgetSec` at about 2.5 words per second. A shorter line is better than a held frame.
    - A step marked DIFFERENT or COULD NOT DO must say what was actually seen, from `seen` in `results.json`. Never narrate the expectation as if it happened.
@@ -61,7 +61,7 @@ Run it with output in a file (`> vo.log 2>&1`) and read only the last lines.
    - the extended slots, with times
    - the engine and voice used
 
-Optional loudness check: `ffmpeg -i <clip> -af volumedetect -f null -` prints `mean_volume`. A mean below about -50 dB means the audio is silent.
+Loudness: each line is normalised to about -16 LUFS (true peak -1.5 dBTP) and the mix is limited, so `full.mp4` does not clip. `report.md` lists the measured integrated LUFS, true peak, mean and max. Optional check: `ffmpeg -i <clip> -af volumedetect -f null -` prints `mean_volume`. A mean below about -50 dB means the audio is silent.
 
 ## Outputs
 
@@ -80,7 +80,7 @@ Optional loudness check: `ffmpeg -i <clip> -af volumedetect -f null -` prints `m
 |---|---|---|
 | `piper` | Default. Neural, natural enough for a demo | Offline |
 | `system` | Windows SAPI, macOS `say`, Linux espeak-ng. Fallback | Offline |
-| `edge` | Best quality | Online. Text goes to Microsoft. Opt-in only |
+| `edge` | Best quality | Online. Text goes to Microsoft. Opt-in only. Tested 2026-11-06 with the fixture narration: works |
 
 Details, voices, timing rules and fixes are in `references/voiceover.md`.
 

@@ -77,7 +77,33 @@ def test_different_step_mentions_seen():
         line = next(l for l in doc["lines"] if l["id"] == f"c{s['chapterIndex']}s{s['step']}")
         seen = s["seen"].rstrip(".")
         assert seen in line["text"], line["text"]
-        assert "not go as expected" in line["text"] or "did not" in line["text"]
+        assert "expected" in line["text"].lower() or "could not" in line["text"].lower(), line["text"]
+
+
+def test_draft_is_usable():
+    """The draft fits every slot, has no 'As expected' filler and no stray capitals after the first word."""
+    run, doc, _ = test_make_script()
+    assert doc["overflowCount"] == 0, [l["id"] for l in doc["lines"] if l["overflow"]]
+    assert doc["style"] == "plain"
+    for l in doc["lines"]:
+        t = l["text"]
+        assert "As expected," not in t and not t.startswith("As expected"), t
+        assert l["estSec"] <= l["budgetSec"], (l["id"], t)
+        if l["kind"] == "step":
+            assert t.startswith("We "), t
+            assert not re.match(r"We [A-Z][a-z]+ ", t), t       # "We Open ..." is a stray capital
+    lead = [l for l in doc["lines"] if l["kind"] == "lead"]
+    assert re.match(r"First, ", lead[0]["text"])
+
+
+def test_brief_style():
+    run = fresh_run()
+    code, out = sh("make_script.py", run, "--style", "brief")
+    assert code == 0, out
+    doc = json.loads((run / "voiceover" / "narration.json").read_text(encoding="utf-8"))
+    assert doc["style"] == "brief" and doc["overflowCount"] == 0
+    plain = draft(fresh_run())
+    assert doc["totalEstSec"] <= plain["totalEstSec"]
 
 
 def test_overflow_flags():
@@ -104,7 +130,9 @@ def test_refuses_without_approval_and_after_edit():
     assert not (run / "voiced").exists() or not any((run / "voiced").iterdir())
     approve(run)
     nj = run / "voiceover" / "narration.json"
-    nj.write_text(nj.read_text(encoding="utf-8").replace("Chapter 1", "Chapter one", 1), encoding="utf-8")
+    d = json.loads(nj.read_text(encoding="utf-8"))
+    d["lines"][0]["text"] += " Edited after approval."
+    nj.write_text(json.dumps(d), encoding="utf-8")
     code, out = sh("voiceover.py", run, "--engine", "system")
     assert code != 0 and "changed after it was approved" in out, out
     assert not (run / "voiced").exists() or not any((run / "voiced").iterdir())
@@ -125,9 +153,9 @@ def check_engine(engine, extra=()):
     res = json.loads((run / "results.json").read_text(encoding="utf-8"))
     voiced = run / "voiced"
     total = 0.0
-    for c in res["clips"]:
-        f = voiced / (Path(c["file"]).stem + ".mp4")
-        assert f.exists(), f
+    files = sorted(p for p in voiced.glob("*.mp4") if p.name != "full.mp4")
+    assert len(files) == len(res["clips"]), files
+    for f in files:
         d, has_a, has_v = common.ffmpeg_info(FFMPEG, f)
         assert has_a and has_v and d > 0, f
         total += d
@@ -136,19 +164,52 @@ def check_engine(engine, extra=()):
     fd, fa, _ = common.ffmpeg_info(FFMPEG, full)
     assert fa
     assert fd >= total - 1.0, (fd, total)
+    # loudness: speech is normalised, nothing near clipping
+    mean, mx = volume(first_voiced := files[0])
+    assert mx <= -1.0, (first_voiced, mx)
+    assert -24 <= mean <= -14, (first_voiced, mean)
     # originals untouched
     assert sha_tree(run / "clips") == before
     assert hashlib.sha256((run / "results.json").read_bytes()).hexdigest() == res_before
     assert (run / "voiceover" / "report.md").exists()
     # subtitles
     srts = list(voiced.glob("*.srt"))
-    assert len(srts) == len(res["clips"]) + 1
+    assert len(srts) == len(files) + 1
     for s in srts:
         check_srt(s)
     # re-running refuses without --force, works with it
     code, out = sh("voiceover.py", run, "--engine", engine)
     assert code != 0 and "already exists" in out
     return run, fd, total
+
+
+def volume(path):
+    """(mean_volume, max_volume) in dB from ffmpeg volumedetect."""
+    r = subprocess.run([FFMPEG, "-hide_banner", "-nostats", "-i", str(path), "-af", "volumedetect", "-vn", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    m = re.search(r"mean_volume:\s*(-?[\d.]+) dB", r.stderr)
+    x = re.search(r"max_volume:\s*(-?[\d.]+) dB", r.stderr)
+    assert m and x, r.stderr[-300:]
+    return float(m.group(1)), float(x.group(1))
+
+
+def test_edge_engine_online():
+    """Opt-in: sends the fixture's invented narration to Microsoft's online voice. Run with DEMO_TEST_ONLINE=1."""
+    import os
+    if os.environ.get("DEMO_TEST_ONLINE") != "1":
+        print("SKIP edge engine: set DEMO_TEST_ONLINE=1 to run it (needs internet)")
+        return
+    run = fresh_run()
+    draft(run)
+    code, out = sh("make_script.py", run, "--render", "--engine", "edge")
+    assert code == 0, out
+    approve(run)
+    code, out = sh("voiceover.py", run, "--engine", "edge", "--allow-online")
+    assert code == 0, out
+    full = run / "voiced" / "full.mp4"
+    assert full.exists()
+    d, has_a, _ = common.ffmpeg_info(FFMPEG, full)
+    assert has_a and d > 0
 
 
 def check_srt(path):

@@ -8,7 +8,7 @@ voiced/full.mp4, voiced/player.html and <run>/voiceover/report.md.
 When a line is longer than its slot, the frame is held (ffmpeg tpad) and the hold is
 recorded in the report. The original clips are only ever read.
 """
-import argparse, shutil, subprocess, sys, tempfile
+import argparse, json, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 from common import (reexec_in_venv, sha256_file, load_json, load_results, find_ffmpeg, ffmpeg_info,
                     srt_time, voice_dir, SKILL_DIR, GAP)
@@ -81,10 +81,42 @@ def build_filter(clip_dur, holds, placed, first_audio_index):
         parts.append(f"[{first_audio_index + k}:a]aresample=44100,aformat=channel_layouts=mono,adelay={ms}:all=1[a{k}]")
         labels.append(f"[a{k}]")
     if labels:
-        parts.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0,apad[aout]")
+        parts.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0,alimiter=limit=0.84:level=disabled,apad[aout]")
     else:
         parts.append("anullsrc=r=44100:cl=mono[aout]")
     return ";".join(parts)
+
+
+TARGET_LUFS, TARGET_TP = -16.0, -1.5
+
+
+def normalise(ffmpeg, src, dst):
+    """Two-pass loudnorm of one line to about -16 LUFS, true peak -1.5 dBTP. Returns dst, or src if ffmpeg fails."""
+    af = f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}:LRA=11"
+    r = subprocess.run([ffmpeg, "-hide_banner", "-i", str(src), "-af", af + ":print_format=json", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    m = re.findall(r"\{[^{}]*\}", r.stderr, re.S)
+    try:
+        j = json.loads(m[-1])
+        af += (f":measured_I={j['input_i']}:measured_TP={j['input_tp']}:measured_LRA={j['input_lra']}"
+               f":measured_thresh={j['input_thresh']}:offset={j['target_offset']}:linear=true")
+    except Exception:  # noqa: BLE001
+        return src
+    r = subprocess.run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-af", af,
+                        "-ar", "44100", "-ac", "1", str(dst)], capture_output=True, text=True)
+    return dst if r.returncode == 0 and Path(dst).exists() else src
+
+
+def measure(ffmpeg, path):
+    """Integrated loudness (LUFS), true peak (dBTP), mean and max volume (dB) of a file's audio."""
+    r = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path), "-af", "ebur128=peak=true,volumedetect",
+                        "-vn", "-f", "null", "-"], capture_output=True, text=True)
+    t = r.stderr
+    def g(pat):
+        m = re.findall(pat, t)
+        return float(m[-1]) if m else None
+    return dict(lufs=g(r"\s+I:\s+(-?[\d.]+) LUFS"), tp=g(r"Peak:\s+(-?[\d.]+) dBFS"),
+                mean=g(r"mean_volume:\s+(-?[\d.]+) dB"), max=g(r"max_volume:\s+(-?[\d.]+) dB"))
 
 
 def run(cmd):
@@ -156,6 +188,8 @@ def main():
             d, has_a, _ = ffmpeg_info(ffmpeg, p)
             if not has_a or d <= 0:
                 raise RuntimeError("empty audio")
+            p = normalise(ffmpeg, p, work / (l["id"] + "_n.wav"))
+            d, has_a, _ = ffmpeg_info(ffmpeg, p)
             audio[l["id"]], durs[l["id"]] = p, d
         except Exception as e:  # noqa: BLE001
             failed.append((l["id"], str(e)[:200]))
@@ -199,11 +233,14 @@ def main():
     (out_dir / "player.html").write_text(
         player_html(res["title"], [p.name for p, _ in voiced], chapters), encoding="utf-8")
 
+    lv = measure(ffmpeg, full)
     orig = sum(float(c["durationSec"]) for c in res["clips"])
     rep = [f"# Voice-over report: {res['title']}", "",
            f"- Engine: {engine}" + (" (online, text sent to Microsoft)" if engine == "edge" else " (offline)"),
            f"- Voice: {voice}", f"- Narration hash (approved): {sha}",
            f"- Original length: {orig:.1f} s; voiced full.mp4: {full_dur:.1f} s",
+           "- Loudness of full.mp4: integrated {} LUFS, true peak {} dBTP, mean {} dB, max {} dB (target {} LUFS, peak at most {} dBTP)".format(
+               lv["lufs"], lv["tp"], lv["mean"], lv["max"], TARGET_LUFS, TARGET_TP),
            f"- Lines: {len(doc['lines'])}; failed: {len(failed)}; extended slots: {len(extended)}", ""]
     if note:
         rep += [f"Note: {note.strip()}", ""]
