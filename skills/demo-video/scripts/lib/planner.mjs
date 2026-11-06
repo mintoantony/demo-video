@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { mmss } from './util.mjs';
 import { resolveScript, scriptHash } from './approval.mjs';
+import { ENGINE_VERSION } from './version.mjs';
 
 export function createPlanner(o, readMs) {
   const sp = o.scriptPath ? resolveScript(o.scriptPath) : null;
@@ -62,6 +63,7 @@ function storyboardMd(o, plan, env, estimate) {
     `- Target URL: ${o.baseUrl || '(not set)'}`,
     `- Environment: ${env}${env === 'local' ? '' : '  (not local: needs your explicit OK)'}`,
     `- Reset command: ${o.resetCommand || 'none given'}`,
+    `- Engine: ${ENGINE_VERSION}`,
     `- Chapters: ${plan.chapters.length}, steps: ${plan.chapters.reduce((a, c) => a + c.steps.length, 0)}`,
     `- Estimated length: about ${mmss(total)} (${Math.round(total)} s)`, '',
     '## Steps that change data', '',

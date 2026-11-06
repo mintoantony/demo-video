@@ -19,13 +19,14 @@ import { highlight, unhighlight } from './lib/overlay.mjs';
 import { createMonitor, analyseFrames } from './lib/monitor.mjs';
 import { createPlanner } from './lib/planner.mjs';
 import { resolveScript, scriptHash, checkApproval } from './lib/approval.mjs';
+import { ENGINE_VERSION } from './lib/version.mjs';
 import { findFfmpeg } from './lib/cutter.mjs';
 import { card, asLoc } from './lib/cards.mjs';
 import { closeSegment } from './lib/segments.mjs';
 import { chapter } from './lib/chapter.mjs';
 import { summarise, writeOutputs } from './lib/report.mjs';
 
-export { analyseFrames, resolveScript, scriptHash };
+export { analyseFrames, resolveScript, scriptHash, ENGINE_VERSION };
 
 export async function createRecorder(opts = {}) {
   const o = {
@@ -66,6 +67,7 @@ export async function createRecorder(opts = {}) {
     log: (m) => console.log(`[${mmss((Date.now() - t0) / 1000)}] ${m}`),
     url: (u) => (/^https?:/i.test(u) || !o.baseUrl ? u : new URL(u, o.baseUrl).toString()),
   };
+  for (const w of approval.engineWarnings) { S.notes.push(w); console.log('WARNING ' + w); }
   const monitor = createMonitor(S);
   S.startMonitor = monitor.startMonitor;
 

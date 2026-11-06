@@ -92,6 +92,9 @@ Licences: the npm package `ffmpeg-static` is GPL-3.0-or-later. The binary it dow
 ## Module layout
 
 `skills/demo-video/scripts/recorder.mjs` is the public entry point. The work lives in `scripts/lib/`: approval, cards, chapter, cutter (ffmpeg), monitor, overlay, planner, player, report, segments, step, util, version.
+## Engine version in the approval
+
+Plan mode writes `- Engine: <version>` into storyboard.md, and `approve.mjs` records it as `engineVersion` in storyboard.approved.json next to the script hash. The version is `<semver>+<8-hex hash of the engine files>`. Record mode compares only major.minor: a different major.minor refuses with "The engine changed since you approved. Re-plan and confirm."; a patch-only difference records anyway and adds a warning to report.md. An approval file with no `engineVersion` (approved by an older engine) is refused the same way. `DEMO_APPROVED_ENGINE` (or the `approvedEngine` option) is checked like `DEMO_APPROVED_HASH`.
 ## Outputs
 
 Each run has its own timestamped folder under `demo-runs/`. Earlier runs are never deleted. It holds `clips/*.webm`, `player.html`, `report.md`, `results.json`, `chapters.json`, `chapters.txt`, `screenshots/`, and `full.mp4` if ffmpeg is installed.

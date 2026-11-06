@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { ENGINE_VERSION } from './version.mjs';
 
 export function resolveScript(p) {
   if (!p) throw new Error('No script path given.');
@@ -33,5 +34,21 @@ export function checkApproval(o) {
   if (want && !now.startsWith(String(want).toLowerCase())) {
     throw new Error('The script does not match the approved hash given in the brief. Re-confirm with the user. Not recording.');
   }
-  return { approval: m, hash: now };
+  const engineNote = checkEngine(m.engineVersion, 'the approval file');
+  const wantEngine = o.approvedEngine || process.env.DEMO_APPROVED_ENGINE;
+  const briefNote = wantEngine ? checkEngine(wantEngine, 'the brief') : null;
+  return { approval: m, hash: now, engineWarnings: [engineNote, briefNote].filter(Boolean) };
+}
+
+const majorMinor = (v) => { const x = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v || '')); return x ? { mm: `${x[1]}.${x[2]}`, patch: Number(x[3]) } : null; };
+
+// Compares the engine now running with the one that was approved. Different major.minor (or no
+// version at all, as in an old approval file) refuses; a patch-only difference returns a warning.
+export function checkEngine(approved, where, current = ENGINE_VERSION) {
+  const a = majorMinor(approved);
+  const c = majorMinor(current);
+  if (!a) throw new Error(`The engine changed since you approved. Re-plan and confirm. (${where} records no engine version, so it was approved with an older engine; now ${current}. Not recording.)`);
+  if (a.mm !== c.mm) throw new Error(`The engine changed since you approved. Re-plan and confirm. (approved with ${approved} in ${where}, now ${current}. Not recording.)`);
+  if (String(approved) !== String(current)) return `Engine patch difference: approved with ${approved} in ${where}, recorded with ${current}. Same major.minor, so recording went ahead.`;
+  return null;
 }

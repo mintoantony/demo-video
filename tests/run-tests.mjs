@@ -6,6 +6,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runFixtureWalkthrough } from './fixture-walkthrough.mjs';
+import { ENGINE_VERSION } from '../skills/demo-video/scripts/recorder.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.join(here, 'fixture-app');
@@ -38,6 +39,7 @@ try {
   const plan = await runFixtureWalkthrough({ baseUrl, outRoot, mode: 'plan', planDir });
   const sb = fs.readFileSync(path.join(planDir, 'storyboard.md'), 'utf8');
   check('plan mode writes storyboard.md with every chapter', ['Sign in', 'Fill in a request', 'Look at the list as another person'].every((c) => sb.includes(c)) && plan.mode === 'plan');
+  check('storyboard names the engine version', sb.includes('- Engine: ' + ENGINE_VERSION), ENGINE_VERSION);
   check('storyboard lists every step', ['Open the sign-in page', 'Choose Ada Fixture', 'Press Submit', 'Open the Slow report', 'Open the Requests list'].every((x) => sb.includes(x)));
   check('storyboard flags the data-changing step', /Press Submit.*(changes data|DATA)/i.test(sb), 'row for Press Submit');
   check('storyboard has environment, reset command, estimate and open questions', /local/i.test(sb) && sb.includes('none needed') && /estimated/i.test(sb) && sb.includes('Open questions'));
@@ -62,6 +64,25 @@ try {
   const approvedHash = (ap.stdout.match(/Hash: ([0-9a-f]{64})/) || [])[1];
   check('approve.mjs writes storyboard.approved.json with the sha256', ap.status === 0 && !!approvedHash && JSON.parse(fs.readFileSync(path.join(planDir, 'storyboard.approved.json'), 'utf8')).scriptSha256 === approvedHash);
   const recArgs = { baseUrl, outRoot, planDir, approvedHash: approvedHash && approvedHash.slice(0, 12) };
+  // ---- engine version in the approval ----
+  const markerFile = path.join(planDir, 'storyboard.approved.json');
+  const marker0 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+  check('approve.mjs records engineVersion', marker0.engineVersion === ENGINE_VERSION, String(marker0.engineVersion));
+  const [maj, min, pat] = ENGINE_VERSION.split('+')[0].split('.').map(Number);
+  const setEngine = (v) => { const m = { ...marker0 }; if (v === undefined) delete m.engineVersion; else m.engineVersion = v; fs.writeFileSync(markerFile, JSON.stringify(m, null, 2)); };
+  const tryRecord = async () => { try { await runFixtureWalkthrough({ baseUrl, outRoot, planDir, approvedHash: approvedHash.slice(0, 12) }); return ''; } catch (e) { return e.message; } };
+  setEngine(`${maj}.${min + 1}.0+deadbeef`);
+  const rMinor = await tryRecord();
+  check('a different minor version refuses', /The engine changed since you approved\. Re-plan and confirm\./.test(rMinor), rMinor.slice(0, 70));
+  setEngine(undefined);
+  const rOld = await tryRecord();
+  check('an old approval with no engineVersion is a mismatch with a clear message', /Re-plan and confirm/.test(rOld) && /no engine version/.test(rOld), rOld.slice(0, 90));
+  process.env.DEMO_APPROVED_ENGINE = `${maj}.${min + 1}.0`;
+  setEngine(ENGINE_VERSION);
+  const rEnv = await tryRecord();
+  delete process.env.DEMO_APPROVED_ENGINE;
+  check('DEMO_APPROVED_ENGINE with another minor refuses', /Re-plan and confirm/.test(rEnv), rEnv.slice(0, 70));
+  setEngine(`${maj}.${min}.${pat + 1}+deadbeef`); // patch-only difference: warns, still records (checked in the DEMO_FFMPEG=none run below)
 
   const before = fs.existsSync(outRoot) ? fs.readdirSync(outRoot).length : 0;
   const t0 = Date.now();
@@ -124,12 +145,14 @@ try {
   check('the first run is intact after the second', fs.existsSync(path.join(r1.runDir, 'results.json')) && fs.readdirSync(path.join(r1.runDir, 'clips')).length === clipFiles.length);
 
   // Segments mode: ffmpeg disabled with DEMO_FFMPEG=none must warn in report.md and write no full.mp4.
+  setEngine(`${maj}.${min}.${pat + 1}+deadbeef`); // patch-only difference: must warn but still record
   process.env.DEMO_FFMPEG = 'none';
   let r3;
   try { r3 = await runFixtureWalkthrough(recArgs); } finally { delete process.env.DEMO_FFMPEG; }
   const res3 = JSON.parse(fs.readFileSync(path.join(r3.runDir, 'results.json'), 'utf8'));
   const rep3 = fs.readFileSync(path.join(r3.runDir, 'report.md'), 'utf8');
   check('DEMO_FFMPEG=none gives segments mode', res3.mode === 'segments' && res3.ffmpeg.available === false);
+  check('a patch-only engine difference warns in report.md but still records', rep3.includes('Engine patch difference'), 'warning in report');
   check('DEMO_FFMPEG=none writes no full.mp4', !fs.existsSync(path.join(r3.runDir, 'full.mp4')));
   check('report.md warns "segments mode: no per-chapter clips, no full.mp4" and says how to fix it',
     rep3.includes('ffmpeg was not found') && rep3.includes('segments mode: no per-chapter clips, no full.mp4') && rep3.includes('npm install'));
